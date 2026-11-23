@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -12,6 +12,9 @@ from relay.storage.archive import archive_from_environment
 
 router = APIRouter(prefix="/api/v1/intake", tags=["intake"])
 
+MailState = Literal["failed", "review", "queued", "complete", "archived"]
+MailFilter = Literal["all", "actionable", "failed", "review", "queued", "complete", "archived"]
+
 
 class MailSummary(BaseModel):
     id: int
@@ -20,6 +23,15 @@ class MailSummary(BaseModel):
     received_at: datetime
     intake_error_code: str | None
     attachment_count: int
+    templates: list[str]
+    state: MailState
+
+
+class IntakeCounts(BaseModel):
+    total: int
+    failed: int
+    review: int
+    queued: int
 
 
 class AttachmentSummary(BaseModel):
@@ -29,6 +41,9 @@ class AttachmentSummary(BaseModel):
     intake_state: str
     job_state: str | None
     error_code: str | None
+    error_location: str | None
+    error_reason: str | None
+    review_location: str | None
     template: str | None
 
 
@@ -48,15 +63,67 @@ class RawQuantity(BaseModel):
     latest_date: date | None
     quantity_cell: str | None
     raw_delivery_date: str | None
+    delivery_date_cell: str | None
     raw_interval_start: str | None
     raw_interval_end: str | None
 
 
-_MAIL_SUMMARY = """
-    SELECT mail.id, mail.sender, mail.subject, mail.received_at, mail.intake_error_code,
-    (SELECT count(*) FROM received_attachments WHERE mail_id = mail.id) AS attachment_count
-    FROM received_mail AS mail
+_REVIEW_LOCATION = """
+    SELECT qty.source_fields->'DateTime'->>'cell' AS location
+    FROM parsed_material_blocks AS block
+    JOIN parsed_quantity_records AS qty ON qty.block_id = block.id
+    WHERE run.template = 'kroschu_4905' AND block.run_id = run.id
+    AND qty.source_fields->'DateTime'->>'value' = '000000'
+    ORDER BY block.position, qty.position LIMIT 1
 """
+_ATTACHMENT_ROWS = f"""
+    FROM received_attachments AS att
+    LEFT JOIN parse_jobs AS job ON job.attachment_id = att.id
+    LEFT JOIN parse_runs AS run ON run.job_id = job.id
+    LEFT JOIN LATERAL ({_REVIEW_LOCATION}) AS review ON true
+"""
+_MAIL_SUMMARY = f"""
+    SELECT mail.id, mail.sender, mail.subject, mail.received_at, mail.intake_error_code,
+    att_summary.attachment_count, att_summary.templates,
+    CASE
+        WHEN mail.intake_error_code IS NOT NULL OR att_summary.failed THEN 'failed'
+        WHEN att_summary.for_review THEN 'review'
+        WHEN att_summary.in_progress THEN 'queued'
+        WHEN att_summary.succeeded THEN 'complete'
+        ELSE 'archived'
+    END AS state
+    FROM received_mail AS mail
+    CROSS JOIN LATERAL (
+        SELECT count(*) AS attachment_count,
+        COALESCE(array_agg(DISTINCT run.template ORDER BY run.template)
+            FILTER (WHERE run.template IS NOT NULL), ARRAY[]::varchar[]) AS templates,
+        bool_or(att.intake_state = 'rejected' OR job.state = 'failed') AS failed,
+        bool_or(review.location IS NOT NULL) AS for_review,
+        bool_or(job.state IN ('pending', 'processing')) AS in_progress,
+        bool_or(job.state = 'succeeded') AS succeeded
+        {_ATTACHMENT_ROWS}
+        WHERE att.mail_id = mail.id
+    ) AS att_summary
+"""
+_ACTIONABLE_STATES = "('failed', 'review', 'queued')"
+
+
+@router.get("/counts")
+def counts(_: SignedInUser) -> IntakeCounts:
+    with get_engine().connect() as connection:
+        row = (
+            connection.execute(
+                text(
+                    "SELECT count(*) AS total, count(*) FILTER (WHERE state = 'failed') AS failed, "
+                    "count(*) FILTER (WHERE state = 'review') AS review, "
+                    "count(*) FILTER (WHERE state = 'queued') AS queued "
+                    f"FROM ({_MAIL_SUMMARY}) AS summary"
+                )
+            )
+            .mappings()
+            .one()
+        )
+    return IntakeCounts.model_validate(row)
 
 
 @router.get("/emails")
@@ -64,13 +131,36 @@ def emails(
     _: SignedInUser,
     before: Annotated[int, Query(ge=1)] | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    state: MailFilter = "all",
+    q: Annotated[str, Query(max_length=120)] = "",
 ) -> list[MailSummary]:
-    query = _MAIL_SUMMARY
+    criteria = ["true"]
+    filters = ["true"]
     if before is not None:
-        query += " WHERE mail.id < :before"
-    query += " ORDER BY mail.id DESC LIMIT :limit"
+        criteria.append("mail.id < :before")
+    if q.strip():
+        criteria.append(
+            "(strpos(lower(mail.sender), lower(:query)) > 0 "
+            "OR strpos(lower(mail.subject), lower(:query)) > 0 "
+            "OR EXISTS (SELECT 1 FROM received_attachments "
+            "WHERE mail_id = mail.id AND strpos(lower(filename), lower(:query)) > 0))"
+        )
+    if state == "actionable":
+        filters.append(f"summary.state IN {_ACTIONABLE_STATES}")
+    elif state != "all":
+        filters.append("summary.state = :state")
+    query = text(
+        f"SELECT * FROM ({_MAIL_SUMMARY} WHERE {' AND '.join(criteria)}) AS summary "
+        f"WHERE {' AND '.join(filters)} ORDER BY id DESC LIMIT :limit"
+    )
     with get_engine().connect() as connection:
-        rows = connection.execute(text(query), {"before": before, "limit": limit}).mappings().all()
+        rows = (
+            connection.execute(
+                query, {"before": before, "limit": limit, "query": q.strip(), "state": state}
+            )
+            .mappings()
+            .all()
+        )
     return [MailSummary.model_validate(row) for row in rows]
 
 
@@ -88,11 +178,11 @@ def email_detail(mail_id: int, _: SignedInUser) -> MailDetail:
             connection.execute(
                 text(
                     "SELECT att.id, att.filename, att.intake_state, blob.size_bytes, "
-                    "job.state AS job_state, job.error_code, run.template "
-                    "FROM received_attachments AS att "
+                    "job.state AS job_state, job.error_code, job.error_reason, job.error_location, "
+                    "run.template, "
+                    "review.location AS review_location "
+                    f"{_ATTACHMENT_ROWS} "
                     "LEFT JOIN archive_objects AS blob ON blob.sha256 = att.sha256 "
-                    "LEFT JOIN parse_jobs AS job ON job.attachment_id = att.id "
-                    "LEFT JOIN parse_runs AS run ON run.job_id = job.id "
                     "WHERE att.mail_id = :id ORDER BY att.id"
                 ),
                 {"id": mail_id},
@@ -126,6 +216,8 @@ def quantities(
                     "qty.source_fields->'Qty'->>'cell' AS quantity_cell, "
                     "COALESCE(qty.source_fields->'RequestedDeliveryDate'->>'value', "
                     "qty.source_fields->'DateTime'->>'value') AS raw_delivery_date, "
+                    "COALESCE(qty.source_fields->'RequestedDeliveryDate'->>'cell', "
+                    "qty.source_fields->'DateTime'->>'cell') AS delivery_date_cell, "
                     "qty.source_fields->'HorizonStartDate'->>'value' AS raw_interval_start, "
                     "qty.source_fields->'HorizonEndDate'->>'value' AS raw_interval_end "
                     "FROM parsed_quantity_records AS qty "

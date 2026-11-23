@@ -41,7 +41,15 @@ def process_one(archive: Archive) -> bool:
             complete(lease, document)
     except ArchiveIntegrityError:
         fail(lease, "archive_integrity", retryable=True)
-    except (ParseError, XmlParseError, DefusedXmlException, ValueError):
+    except ParseError as error:
+        fail(
+            lease,
+            "invalid_or_unsupported_workbook",
+            retryable=False,
+            location=error.location,
+            reason=error.reason,
+        )
+    except (XmlParseError, DefusedXmlException, ValueError):
         fail(lease, "invalid_or_unsupported_workbook", retryable=False)
     except OSError:
         fail(lease, "archive_io", retryable=True)

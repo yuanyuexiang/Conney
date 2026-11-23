@@ -56,5 +56,6 @@ def test_preserves_zero_interval_and_source_codes(tmp_path: Path) -> None:
 def test_rejects_formula_instead_of_treating_cached_value_as_quantity(tmp_path: Path) -> None:
     attachment = tmp_path / "attachment.xlsx"
     _fixture(attachment, "=1+1")
-    with pytest.raises(ParseError, match=r"Relay!8: unexpected formula"):
+    with pytest.raises(ParseError, match=r"Relay!C8: unexpected formula") as failure:
         parse_vitesco(attachment)
+    assert failure.value.location == "Relay!C8"

@@ -33,7 +33,8 @@ def claim() -> ParseLease | None:
         connection.execute(
             text(
                 "UPDATE parse_jobs SET state = 'failed', lease_token = NULL, lease_until = NULL, "
-                "error_code = 'lease_expired' WHERE state = 'processing' "
+                "error_code = 'lease_expired', error_location = NULL, error_reason = NULL "
+                "WHERE state = 'processing' "
                 "AND lease_until <= clock_timestamp() AND attempts >= :limit"
             ),
             {"limit": _MAX_ATTEMPTS},
@@ -72,14 +73,21 @@ def renew(lease: ParseLease) -> bool:
     return updated is not None
 
 
-def fail(lease: ParseLease, code: str, *, retryable: bool) -> bool:
+def fail(
+    lease: ParseLease,
+    code: str,
+    *,
+    retryable: bool,
+    location: str | None = None,
+    reason: str | None = None,
+) -> bool:
     retry = retryable and lease.attempts < _MAX_ATTEMPTS
     with get_engine().begin() as connection:
         updated = connection.execute(
             text(
                 "UPDATE parse_jobs SET state = :state, lease_token = NULL, lease_until = NULL, "
                 "available_at = clock_timestamp() + make_interval(secs => :delay), "
-                "error_code = :code "
+                "error_code = :code, error_location = :location, error_reason = :reason "
                 f"WHERE {_LEASE_PREDICATE} RETURNING id"
             ),
             {
@@ -87,6 +95,8 @@ def fail(lease: ParseLease, code: str, *, retryable: bool) -> bool:
                 "state": "pending" if retry else "failed",
                 "delay": 10 * 4 ** (lease.attempts - 1) if retry else 0,
                 "code": code,
+                "location": location,
+                "reason": reason,
             },
         ).scalar_one_or_none()
     return updated is not None
@@ -97,8 +107,10 @@ def complete(lease: ParseLease, document: ParsedDocument) -> bool:
     with get_engine().begin() as connection:
         owned = connection.execute(
             text(
-                "UPDATE parse_jobs SET state = 'succeeded', error_code = NULL, lease_token = NULL, "
-                f"lease_until = NULL WHERE {_LEASE_PREDICATE} RETURNING id"
+                "UPDATE parse_jobs SET state = 'succeeded', error_code = NULL, "
+                "error_location = NULL, error_reason = NULL, lease_token = NULL, "
+                "lease_until = NULL "
+                f"WHERE {_LEASE_PREDICATE} RETURNING id"
             ),
             lease.key(),
         ).scalar_one_or_none()

@@ -54,18 +54,21 @@ class MailboxInput(BaseModel):
         return value
 
 
-class MailboxConfig(BaseModel):
+class MailboxSyncStatus(BaseModel):
+    enabled: bool
+    verified: bool
+    last_sync_at: datetime | None = None
+    last_sync_result: str | None = None
+    last_sync_count: int | None = None
+
+
+class MailboxConfig(MailboxSyncStatus):
     address: str
     host: MailboxHost
     folder: str
     since: date
     poll_minutes: int
     has_password: bool
-    enabled: bool
-    verified: bool
-    last_sync_at: datetime | None = None
-    last_sync_result: str | None = None
-    last_sync_count: int | None = None
 
 
 _PUBLIC_COLUMNS = (

@@ -44,6 +44,7 @@ def test_mailbox_config_is_protected_and_never_returns_the_credential(
     try:
         with TestClient(app) as client:
             assert client.get("/api/v1/mailbox").status_code == 401
+            assert client.get("/api/v1/mailbox/status").status_code == 401
             assert client.put("/api/v1/mailbox", headers=headers, json=payload).status_code == 401
             signed_in(client, "admin")
             assert client.get("/api/v1/mailbox", headers=headers).json() is None
@@ -91,6 +92,19 @@ def test_mailbox_config_is_protected_and_never_returns_the_credential(
             check.assert_called_once_with(address, "imap.263.net", "INBOX", credential)
             enabled = client.put("/api/v1/mailbox/sync", headers=headers, json={"enabled": True})
             assert enabled.status_code == 200 and enabled.json()["enabled"]
+            with TestClient(app) as viewer:
+                signed_in(viewer, "viewer")
+                assert viewer.get("/api/v1/mailbox").status_code == 403
+                status = viewer.get("/api/v1/mailbox/status")
+                assert status.status_code == 200
+                assert status.headers["cache-control"] == "no-store"
+                assert status.json() == {
+                    "enabled": True,
+                    "verified": True,
+                    "last_sync_at": None,
+                    "last_sync_result": None,
+                    "last_sync_count": None,
+                }
             edited = client.put(
                 "/api/v1/mailbox",
                 headers=headers,

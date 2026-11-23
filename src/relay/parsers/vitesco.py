@@ -53,7 +53,7 @@ def _quantity(row: WorkbookRow, columns: dict[str, int]) -> QuantityRecord:
     start = parsed_date(source["EarliestDeliveryDate"])
     end = parsed_date(source["LastDeliveryDate"])
     if (start is None) != (end is None) or (start and end and start > end):
-        raise ParseError(f"{source['EarliestDeliveryDate'].cell}: invalid delivery interval")
+        raise ParseError("invalid delivery interval", location=source["EarliestDeliveryDate"].cell)
     return QuantityRecord(amount, parsed_date(source["RequestedDeliveryDate"]), start, end, source)
 
 
@@ -112,5 +112,7 @@ def parse_vitesco_rows(rows: WorkbookRows) -> ParsedDocument:
 
 def _finish_block(fields: dict[str, SourceValue], records: list[QuantityRecord]) -> MaterialBlock:
     if not fields["BuyerItemNo"].value or not records:
-        raise ParseError(f"{fields['BuyerItemNo'].cell}: missing material number or quantity rows")
+        raise ParseError(
+            "missing material number or quantity rows", location=fields["BuyerItemNo"].cell
+        )
     return MaterialBlock(fields, tuple(records))

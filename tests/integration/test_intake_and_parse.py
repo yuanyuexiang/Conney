@@ -164,6 +164,74 @@ def test_replay_recovers_transaction_and_deduplicates_archive(
 
 
 @pytest.mark.skipif(os.environ.get("RELAY_TEST_DB") != "1", reason="Requires test PostgreSQL")
+def test_workbench_classifies_real_jobs_and_preserves_source_coordinates(
+    tmp_path: Path, signed_in: Callable[[TestClient, Role], User]
+) -> None:
+    archive = Archive(tmp_path / "workbench-archive")
+
+    def receive_schedule(uid: int, subject: str, quantity: str) -> int:
+        path = tmp_path / "schedule.xlsx"
+        workbook = Workbook()
+        sheet = workbook.active
+        assert sheet is not None
+        for row in [
+            ["4905 - Delivery Call Off"],
+            ["NewTransmissionNo", "0001"],
+            ["OrderNo", "001", "CustomerItemNo", "MAT-1", "QuantityUnit", "PCE"],
+            ["DateTime", "Qty"],
+            ["000000", quantity],
+        ]:
+            sheet.append(row)
+        workbook.save(path)
+        mail = EmailMessage()
+        mail["From"] = "workbench@example.com"
+        mail["Subject"] = subject
+        mail.set_content("Attached schedule")
+        mail.add_attachment(
+            path.read_bytes(), maintype="application", subtype="octet-stream", filename="4905.xlsx"
+        )
+        return receive(mail.as_bytes(), _identity(uid), archive).mail_id
+
+    base = "/api/v1/intake"
+    with TestClient(app) as client:
+        assert client.get(base + "/counts").status_code == 401
+        signed_in(client, "viewer")
+        before = client.get(base + "/counts").json()
+        review_id = receive_schedule(23, "Workbench review", "18.0")
+        failure_id = receive_schedule(24, "Workbench error", "bad")
+        pending = client.get(base + "/emails", params={"state": "queued", "q": "4905.xlsx"})
+        assert [row["id"] for row in pending.json()] == [failure_id, review_id]
+        assert process_one(archive) and process_one(archive)
+        counts = client.get(base + "/counts").json()
+        assert counts == {
+            "total": before["total"] + 2,
+            "failed": before["failed"] + 1,
+            "review": before["review"] + 1,
+            "queued": before["queued"],
+        }
+        assert (
+            client.get(
+                base + "/emails",
+                params={"state": "actionable", "q": "WORKBENCH", "before": failure_id},
+            ).json()[0]["id"]
+            == review_id
+        )
+        review = client.get(f"{base}/emails/{review_id}").json()
+        assert review["mail"]["templates"] == ["kroschu_4905"]
+        assert review["mail"]["state"] == "review"
+        attachment = review["attachments"][0]
+        assert attachment["review_location"] == "Sheet!A5"
+        row = client.get(f"{base}/attachments/{attachment['id']}/quantities").json()[0]
+        assert row["raw_delivery_date"] == "000000"
+        assert row["delivery_date_cell"] == "Sheet!A5"
+        assert row["requested_date"] is None
+        failure = client.get(f"{base}/emails/{failure_id}").json()
+        assert failure["mail"]["state"] == "failed"
+        assert failure["attachments"][0]["error_reason"] == "invalid quantity"
+        assert failure["attachments"][0]["error_location"] == "Sheet!B5"
+
+
+@pytest.mark.skipif(os.environ.get("RELAY_TEST_DB") != "1", reason="Requires test PostgreSQL")
 def test_imap_cursor_only_advances_past_durable_messages(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

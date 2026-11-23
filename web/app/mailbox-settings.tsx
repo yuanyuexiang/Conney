@@ -50,7 +50,7 @@ const chinaTime = new Intl.DateTimeFormat("zh-CN", {
   timeZone: "Asia/Shanghai", dateStyle: "short", timeStyle: "short", hour12: false,
 });
 
-export function MailboxSettings() {
+export function MailboxSettings({ onChanged }: { onChanged: () => void }) {
   const [mailbox, setMailbox] = useState<Mailbox>(initialMailbox);
   const [password, setPassword] = useState("");
   const [dirty, setDirty] = useState(false);
@@ -127,6 +127,7 @@ export function MailboxSettings() {
       setMailbox(saved);
       setPassword("");
       setDirty(false);
+      onChanged();
       setMessage({ ok: true, text: "邮箱配置已保存，请测试连接后启动采集。" });
     } catch (error) {
       setMessage({ ok: false, text: messageOf(error) });
@@ -142,6 +143,7 @@ export function MailboxSettings() {
       const { result } = await relayRequest<{ result: string }>("/mailbox/connection-test", { method: "POST" });
       const saved = await relayRequest<Mailbox | null>("/mailbox");
       setMailbox(saved ?? initialMailbox);
+      onChanged();
       setMessage({ ok: result === "ok", text: connectionMessages[result] ?? "无法确认连接结果。" });
     } catch (error) {
       setMessage({ ok: false, text: messageOf(error) });
@@ -163,9 +165,10 @@ export function MailboxSettings() {
         last_sync_at: saved.last_sync_at, last_sync_result: saved.last_sync_result,
         last_sync_count: saved.last_sync_count,
       }));
+      onChanged();
       setMessage({
         ok: true,
-        text: enabled ? "采集已启用。首批邮件归档后可在「收件记录」查看。" : "采集已暂停。",
+        text: enabled ? "采集已启用。首批邮件归档后可在「收件档案」查看。" : "采集已暂停。",
       });
     } catch (error) {
       setMessage({ ok: false, text: messageOf(error) });

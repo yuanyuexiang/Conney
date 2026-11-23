@@ -156,11 +156,11 @@ def _schedule_qty(
         start = source["HorizonStartDate"]
         end = source["HorizonEndDate"]
         if bool(start.value) != bool(end.value):
-            raise ParseError(f"{start.cell}: missing delivery interval endpoint")
+            raise ParseError("missing delivery interval endpoint", location=start.cell)
         first = parsed_date(start, keep_short=template.short_dates)
         last = parsed_date(end, keep_short=template.short_dates)
         if first and last and first > last:
-            raise ParseError(f"{start.cell}: inverted delivery interval")
+            raise ParseError("inverted delivery interval", location=start.cell)
     return QuantityRecord(decimal_value(source["Qty"]), requested, first, last, source)
 
 
@@ -181,7 +181,7 @@ def _parse_schedule(rows: WorkbookRows, template: ScheduleTemplate) -> ParsedDoc
         index, columns = _table(group, required)
         fields = adjacent_fields(group[0], labels(group[0]), _MATERIAL)
         if not fields["BuyerItemNo"].value:
-            raise ParseError(f"{fields['BuyerItemNo'].cell}: missing material number")
+            raise ParseError("missing material number", location=fields["BuyerItemNo"].cell)
         fields.update(_attributes(group[1:index]))
         quantities = tuple(
             _schedule_qty(row, columns, template)
@@ -218,7 +218,7 @@ def _parse_kroschu(rows: WorkbookRows) -> ParsedDocument:
             source = {name: fixed_value(row[column]) for name, column in columns.items()}
             raw_date = source["DateTime"]
             if raw_date.value is None:
-                raise ParseError(f"{raw_date.cell}: missing delivery date")
+                raise ParseError("missing delivery date", location=raw_date.cell)
             requested = (
                 parsed_date(raw_date, keep_short=True) if raw_date.value != "000000" else None
             )

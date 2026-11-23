@@ -12,7 +12,7 @@ docker compose --env-file .env -f deployments/docker-compose.yml up --build --wa
 
 默认入口为 `http://127.0.0.1:8080`。通过 `/api/v1/health/live` 检查 API 进程，通过 `/api/v1/health/ready` 检查数据库连接和迁移基线。Compose 由 `migrate` 容器先执行迁移，再启动 API。该配置用于本地开发，客户部署的 HTTPS、备份和监控安排见工作地图。
 
-登录后默认进入「收件记录」，可查看本机归档邮件、附件和原始数量记录。「邮件与附件」继续保留为标注了演示数据的工作台。系统状态读取本机 API。康尼新能源 Logo 来自[客户官网](https://www.knn-nj.com/skin/images/logo.png)，登录页充电场景来自[官网首页横幅](https://www.knn-nj.com/UploadFiles/2025/2025091210160744120.jpg)。两份素材均随本地前端镜像提供。
+登录后默认进入「待处理」。管理员可按引导配置业务邮箱、测试连接和启动采集，查询用户可以查看同步状态和归档记录。「待处理」汇总采集及解析异常、待核对的原值和解析队列。「收件档案」支持搜索主题、发件人和附件名，进入详情可查看原始数量坐标及下载原件。「系统状态」用于检查 API 与数据库。康尼新能源 Logo 来自[客户官网](https://www.knn-nj.com/skin/images/logo.png)，登录页充电场景来自[官网首页横幅](https://www.knn-nj.com/UploadFiles/2025/2025091210160744120.jpg)。两份素材均随本地前端镜像提供。
 
 ## 登录与用户管理
 
@@ -46,7 +46,7 @@ docker compose --env-file .env -f deployments/docker-compose.yml run --rm --no-d
   python -m relay.workers.replay /tmp/forecast.eml --uid 1
 ```
 
-首次回放后在「收件记录」刷新即可查看。每封不同的本地重放邮件使用一个新的 UID。
+首次回放后在「收件档案」刷新即可查看。每封不同的本地重放邮件使用一个新的 UID。
 
 ## 宿主机开发
 

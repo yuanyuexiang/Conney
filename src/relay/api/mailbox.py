@@ -5,10 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.exc import SQLAlchemyError
 
-from relay.api.auth import AdminUser, require_browser_request
+from relay.api.auth import AdminUser, SignedInUser, require_browser_request
 from relay.mail.configuration import (
     MailboxConfig,
     MailboxInput,
+    MailboxSyncStatus,
     get_mail_settings,
     load_configuration,
     load_mailbox_credentials,
@@ -36,12 +37,24 @@ class SyncSettings(BaseModel):
     enabled: bool
 
 
-@router.get("")
-def read_mailbox(_: AdminUser) -> MailboxConfig | None:
+def _read_configuration() -> MailboxConfig | None:
     try:
         return load_configuration()
     except SQLAlchemyError:
         raise HTTPException(503, detail="mailbox_storage_unavailable") from None
+
+
+@router.get("")
+def read_mailbox(_: AdminUser) -> MailboxConfig | None:
+    return _read_configuration()
+
+
+@router.get("/status")
+def read_mailbox_status(_: SignedInUser) -> MailboxSyncStatus | None:
+    configuration = _read_configuration()
+    if configuration is None:
+        return None
+    return MailboxSyncStatus.model_validate(configuration.model_dump())
 
 
 @router.put("", dependencies=_BROWSER)
