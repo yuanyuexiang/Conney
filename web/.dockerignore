@@ -1,0 +1,9 @@
+**
+!app/
+!app/**
+!package.json
+!package-lock.json
+!tsconfig.json
+!next.config.ts
+!public/
+!public/**

@@ -1,0 +1,17 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+node_modules/
+.next/
+*.tsbuildinfo
+/data/
+/samples/edi/raw/*.xlsx
+/samples/edi/reference/*.xlsx
+/docs/commercial/contracts/**/*.pdf
+/docs/commercial/contracts/**/*.docx

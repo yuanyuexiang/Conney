@@ -1,0 +1,74 @@
+name: relay
+
+x-backend: &backend
+  image: relay-backend:local
+  build:
+    context: ..
+    dockerfile: deployments/backend.Dockerfile
+  environment:
+    RELAY_DB_HOST: postgres
+    RELAY_DB_NAME: ${RELAY_DB_NAME:-relay}
+    RELAY_DB_USER: ${RELAY_DB_USER:-relay}
+    RELAY_DB_PASSWORD: ${RELAY_DB_PASSWORD:?Set RELAY_DB_PASSWORD in .env}
+
+services:
+  postgres:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: ${RELAY_DB_NAME:-relay}
+      POSTGRES_USER: ${RELAY_DB_USER:-relay}
+      POSTGRES_PASSWORD: ${RELAY_DB_PASSWORD:?Set RELAY_DB_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  migrate:
+    <<: *backend
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *backend
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/api/v1/health/ready', timeout=4).close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ../web
+      dockerfile: ../deployments/frontend.Dockerfile
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+
+  nginx:
+    image: nginxinc/nginx-unprivileged:1.28-alpine
+    ports:
+      - "127.0.0.1:${RELAY_HTTP_PORT:-8080}:8080"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
