@@ -162,6 +162,14 @@ def is_sync_enabled(revision: UUID | None = None) -> bool:
     return enabled is True
 
 
+def enabled_sync_revision() -> UUID | None:
+    with get_engine().connect() as connection:
+        revision: UUID | None = connection.scalar(
+            text("SELECT revision FROM mailbox_settings WHERE id = 1 AND enabled")
+        )
+    return revision
+
+
 def record_connection_test(revision: UUID, *, passed: bool) -> bool:
     with get_engine().begin() as connection:
         updated = connection.execute(
@@ -199,8 +207,13 @@ def record_sync_result(revision: UUID, result: str, count: int | None) -> None:
         connection.execute(
             text(
                 "UPDATE mailbox_settings SET last_sync_at = now(), last_sync_result = :result, "
-                "last_sync_count = :count, enabled = enabled AND :result != 'uidvalidity_changed' "
+                "last_sync_count = :count, enabled = enabled AND NOT :pause "
                 "WHERE id = 1 AND revision = :revision"
             ),
-            {"result": result, "count": count, "revision": revision},
+            {
+                "result": result,
+                "count": count,
+                "revision": revision,
+                "pause": result == "uidvalidity_changed",
+            },
         )

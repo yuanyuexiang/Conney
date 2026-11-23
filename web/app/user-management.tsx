@@ -1,6 +1,8 @@
 "use client";
 
-import { type FormEvent, useEffect, useState } from "react";
+import { UserAddOutlined } from "@ant-design/icons";
+import { Modal } from "antd";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { messageOf, relayRequest, roleLabels, type Role, type User } from "./relay-api";
 
 export function UserManagement({ current }: { current: User }) {
@@ -8,6 +10,12 @@ export function UserManagement({ current }: { current: User }) {
   const [selectedId, setSelectedId] = useState<number>();
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<{ error: boolean; text: string }>();
+  const [adding, setAdding] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const addButton = useRef<HTMLButtonElement>(null);
+  const usernameInput = useRef<HTMLInputElement>(null);
+  const usernameHint = useId();
+  const passwordHint = useId();
   const selected = users?.find((user) => user.id === selectedId);
 
   useEffect(() => {
@@ -18,39 +26,59 @@ export function UserManagement({ current }: { current: User }) {
     return () => controller.abort();
   }, []);
 
-  async function save(event: FormEvent<HTMLFormElement>, operation: "create" | "access" | "password") {
+  function closeAddUser() {
+    if (!busy) setAdding(false);
+  }
+
+  async function createUser(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (busy || !users) return;
+    const fields = new FormData(event.currentTarget);
+    setBusy(true);
+    setCreateError("");
+    try {
+      const account = await relayRequest<User>("/users", {
+        method: "POST",
+        body: JSON.stringify({
+          username: String(fields.get("username")).trim().toLowerCase(),
+          role: fields.get("role"),
+          password: fields.get("password"),
+        }),
+      });
+      setUsers((previous) => [...(previous ?? []), account]);
+      setStatus({ error: false, text: `已添加账号「${account.username}」。` });
+      setAdding(false);
+    } catch (reason) {
+      setCreateError(messageOf(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function save(event: FormEvent<HTMLFormElement>, operation: "access" | "password") {
+    event.preventDefault();
+    if (busy || !selected) return;
     const form = event.currentTarget;
     const fields = new FormData(form);
     setBusy(true);
     setStatus(undefined);
     try {
-      if (operation === "create") {
-        const account = await relayRequest<User>("/users", {
-          method: "POST",
-          body: JSON.stringify({ username: String(fields.get("username")).trim().toLowerCase(), role: fields.get("role"), password: fields.get("password") }),
+      const path = `/users/${selected.id}`;
+      if (operation === "access") {
+        const account = await relayRequest<User>(path, {
+          method: "PATCH",
+          body: JSON.stringify({ role: fields.get("role") as Role, active: fields.get("active") === "on" }),
         });
-        setUsers((previous) => [...(previous ?? []), account]);
+        setUsers((previous) => previous?.map((user) => user.id === account.id ? account : user));
+        setStatus({ error: false, text: "权限已更新，该用户需要重新登录。" });
+      } else {
+        await relayRequest(path + "/password", {
+          method: "POST",
+          body: JSON.stringify({ password: fields.get("password") }),
+        });
+        setUsers((previous) => previous?.map((user) => user.id === selected.id ? { ...user, must_change_password: true } : user));
         form.reset();
-        setStatus({ error: false, text: "账号已创建。用户首次登录后需要更改临时密码。" });
-      } else if (selected) {
-        const path = `/users/${selected.id}`;
-        if (operation === "access") {
-          const account = await relayRequest<User>(path, {
-            method: "PATCH",
-            body: JSON.stringify({ role: fields.get("role") as Role, active: fields.get("active") === "on" }),
-          });
-          setUsers((previous) => previous?.map((user) => user.id === account.id ? account : user));
-          setStatus({ error: false, text: "权限已更新，该用户需要重新登录。" });
-        } else {
-          await relayRequest(path + "/password", {
-            method: "POST",
-            body: JSON.stringify({ password: fields.get("password") }),
-          });
-          setUsers((previous) => previous?.map((user) => user.id === selected.id ? { ...user, must_change_password: true } : user));
-          form.reset();
-          setStatus({ error: false, text: "临时密码已重置，原登录会话已撤销。" });
-        }
+        setStatus({ error: false, text: "临时密码已重置，原登录会话已撤销。" });
       }
     } catch (reason) {
       setStatus({ error: true, text: messageOf(reason) });
@@ -63,7 +91,18 @@ export function UserManagement({ current }: { current: User }) {
     <div className="user-management">
       {status && <p role={status.error ? "alert" : "status"} className={`notice ${status.error ? "failed" : ""}`}>{status.text}</p>}
       <section className="page-card">
-        <div className="section-heading"><h3>账号列表</h3><span>{users?.length ?? 0} 个账号</span></div>
+        <div className="section-heading user-list-heading">
+          <h2>账号列表</h2>
+          {users && <span>{users.length} 个账号</span>}
+          <button ref={addButton} type="button" className="button primary-button" disabled={busy || !users}
+            aria-haspopup="dialog" onClick={() => {
+              setCreateError("");
+              setStatus(undefined);
+              setAdding(true);
+            }}>
+            <UserAddOutlined aria-hidden="true" /> 添加用户
+          </button>
+        </div>
         <div className="table-scroll">
           <table><thead><tr><th scope="col">用户名</th><th scope="col">角色</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead>
             <tbody>{users?.map((user) => (
@@ -75,17 +114,6 @@ export function UserManagement({ current }: { current: User }) {
               </tr>
             ))}</tbody></table>
         </div>
-      </section>
-
-      <section className="page-card mailbox-card">
-        <h2>创建用户</h2>
-        <form className="account-form" onSubmit={(event) => void save(event, "create")}>
-          <label>用户名<input name="username" required minLength={3} maxLength={64} autoComplete="off" /></label>
-          <p className="field-hint">以英文字母开头，可用小写字母、数字、下划线、点或短横线。</p>
-          <label>角色<select name="role" defaultValue="viewer"><option value="viewer">查询用户</option><option value="admin">管理员</option></select></label>
-          <label>临时密码<input name="password" type="password" minLength={8} maxLength={128} autoComplete="new-password" required /></label>
-          <button type="submit" className="button primary-button" disabled={busy || !users}>创建账号</button>
-        </form>
       </section>
 
       {selected && (
@@ -102,6 +130,33 @@ export function UserManagement({ current }: { current: User }) {
           </form>
         </section>
       )}
+
+      <Modal title="添加用户" open={adding} width={440} centered footer={null}
+        destroyOnHidden keyboard={!busy} closable={busy ? false : { "aria-label": "关闭添加用户" }}
+        mask={{ closable: false }} classNames={{ body: "account-dialog-body" }}
+        focusable={{ trap: true, focusTriggerAfterClose: false }} onCancel={closeAddUser}
+        afterOpenChange={(open) => { if (open) usernameInput.current?.focus(); }}
+        afterClose={() => addButton.current?.focus()}>
+        <form className="account-form" onSubmit={(event) => void createUser(event)}>
+          <label>用户名<input ref={usernameInput} name="username" required minLength={3} maxLength={64}
+            autoComplete="off" aria-describedby={usernameHint} disabled={busy} /></label>
+          <p id={usernameHint} className="field-hint">以英文字母开头，可用小写字母、数字、下划线、点或短横线。</p>
+          <label>角色<select name="role" defaultValue="viewer" disabled={busy}>
+            <option value="viewer">查询用户</option>
+            <option value="admin">管理员</option>
+          </select></label>
+          <label>临时密码<input name="password" type="password" minLength={8} maxLength={128}
+            autoComplete="new-password" aria-describedby={passwordHint} required disabled={busy} /></label>
+          <p id={passwordHint} className="field-hint">至少 8 个字符，用户首次登录时需修改。</p>
+          {createError && <p className="notice failed" role="alert">{createError}</p>}
+          <div className="account-form-actions">
+            <button type="button" className="button" onClick={closeAddUser} disabled={busy}>取消</button>
+            <button type="submit" className="button primary-button" disabled={busy}>
+              {busy ? "创建中…" : "创建账号"}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

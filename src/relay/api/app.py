@@ -9,6 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from relay.api.auth import router as auth_router
 from relay.api.intake import router as intake_router
 from relay.api.mailbox import router as mailbox_router
+from relay.api.operations import router as operations_router
 from relay.database.session import get_engine
 
 app = FastAPI(title="Relay", version="0.1.0", docs_url=None, redoc_url=None, openapi_url=None)
@@ -17,6 +18,7 @@ app = FastAPI(title="Relay", version="0.1.0", docs_url=None, redoc_url=None, ope
 app.include_router(auth_router)
 app.include_router(mailbox_router)
 app.include_router(intake_router)
+app.include_router(operations_router)
 
 
 @app.exception_handler(RequestValidationError)

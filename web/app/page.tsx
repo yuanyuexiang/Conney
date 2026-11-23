@@ -4,20 +4,20 @@ import {
   CloudServerOutlined,
   DatabaseOutlined,
   InboxOutlined,
-  KeyOutlined,
   LogoutOutlined,
   MailOutlined,
-  ReloadOutlined,
   TeamOutlined,
 } from "@ant-design/icons";
 import Image from "next/image";
 import { useEffect, useState } from "react";
 import { AccountLayout, PasswordForm, SignIn } from "./account-forms";
+import { AccountMenu } from "./account-menu";
 import { IntakeWorkspace } from "./intake-workspace";
 import { MailboxSettings } from "./mailbox-settings";
 import { describeSync, formatSyncTime, type IntakeCounts, type MailboxStatus } from "./workbench-status";
-import { messageOf, relayRequest, RelayRequestError, roleLabels, type User } from "./relay-api";
+import { messageOf, relayRequest, RelayRequestError, type User } from "./relay-api";
 import { UserManagement } from "./user-management";
+import { SystemStatus } from "./system-status";
 
 const navigation = [
   { label: "工作台", items: [
@@ -27,7 +27,6 @@ const navigation = [
   { label: "管理", items: [
     { id: "mailbox", label: "邮箱配置", icon: MailOutlined, adminOnly: true },
     { id: "users", label: "用户管理", icon: TeamOutlined, adminOnly: true },
-    { id: "password", label: "修改密码", icon: KeyOutlined, adminOnly: false },
     { id: "system", label: "系统状态", icon: CloudServerOutlined, adminOnly: false },
   ] },
 ] as const;
@@ -104,13 +103,15 @@ export default function Home() {
     </AccountLayout>
   );
 
-  return <Workspace user={user} onUpdated={setUser} exit={exit} logoutError={logoutError} />;
+  return <Workspace user={user} onUpdated={setUser} onLogout={() => void logout()}
+    leaving={leaving} logoutError={logoutError} />;
 }
 
-function Workspace({ user, onUpdated, exit, logoutError }: {
+function Workspace({ user, onUpdated, onLogout, leaving, logoutError }: {
   user: User;
   onUpdated: (user: User) => void;
-  exit: React.ReactNode;
+  onLogout: () => void;
+  leaving: boolean;
   logoutError: string;
 }) {
   const [section, setSection] = useState<Section>("queue");
@@ -190,11 +191,10 @@ function Workspace({ user, onUpdated, exit, logoutError }: {
         <div className="topbar-meta">
           <span className={`connection sync-indicator ${sync.tone}`} role="status">
             <span className="connection-dot" />
-            {sync.label}
+            <span className="sync-indicator-label">{sync.label}</span>
             {mailbox?.last_sync_at && <time dateTime={mailbox.last_sync_at} title="最近一次同步时间">{formatSyncTime(mailbox.last_sync_at)}</time>}
           </span>
-          <span className="account-identity">{user.username} <span>· {roleLabels[user.role]}</span></span>
-          {exit}
+          <AccountMenu user={user} leaving={leaving} onLogout={onLogout} onUpdated={onUpdated} />
         </div>
       </header>
       {logoutError && <p className="notice failed" role="alert">{logoutError}</p>}
@@ -219,45 +219,17 @@ function Workspace({ user, onUpdated, exit, logoutError }: {
           <IntakeWorkspace key={active.id} view={active.id} counts={counts} sync={sync}
             mailbox={mailbox} revision={revision} refresh={refresh} onViewArchive={() => setSection("archive")}
             onConfigure={admin ? () => setSection("mailbox") : undefined} />
+        ) : active.id === "system" ? (
+          <SystemStatus onConfigure={admin ? () => setSection("mailbox") : undefined}
+            onViewQueue={() => setSection("queue")} />
         ) : (
           <main className="full-page">
             <h1>{active.label}</h1>
             {active.id === "mailbox" && <MailboxSettings onChanged={refresh} />}
             {active.id === "users" && <UserManagement current={user} />}
-            {active.id === "password" && <div className="page-card mailbox-card"><PasswordForm required={false} onUpdated={onUpdated} /></div>}
-            {active.id === "system" && <SystemStatus />}
           </main>
         )}
       </div>
-    </div>
-  );
-}
-
-const connectionLabels = {
-  checking: "检查中",
-  ready: "服务就绪",
-  unavailable: "服务暂不可用",
-};
-
-function SystemStatus() {
-  const [connection, setConnection] = useState<keyof typeof connectionLabels>("checking");
-  const [check, setCheck] = useState(0);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    fetch("/api/v1/health/ready", { cache: "no-store", signal: controller.signal })
-      .then((response) => setConnection(response.ok ? "ready" : "unavailable"))
-      .catch(() => { if (!controller.signal.aborted) setConnection("unavailable"); });
-    return () => controller.abort();
-  }, [check]);
-
-  return (
-    <div className="system-card page-card">
-      <div><h3>API 与数据库</h3><span role="status" className={`connection ${connection}`}><span className="connection-dot" />{connectionLabels[connection]}</span></div>
-      <button type="button" className="button" disabled={connection === "checking"}
-        onClick={() => { setConnection("checking"); setCheck((previous) => previous + 1); }}>
-        <ReloadOutlined aria-hidden="true" /> 重新检查
-      </button>
     </div>
   );
 }

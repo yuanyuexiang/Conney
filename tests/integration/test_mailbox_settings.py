@@ -1,4 +1,5 @@
 import os
+import sys
 from collections.abc import Callable
 from unittest.mock import MagicMock
 
@@ -11,7 +12,8 @@ import relay.api.mailbox as mailbox_api
 from relay.api.app import app
 from relay.auth.accounts import Role, User
 from relay.database.session import get_engine
-from relay.mail.configuration import get_mail_settings
+from relay.mail.configuration import enabled_sync_revision, get_mail_settings, record_sync_result
+from relay.workers import mail as mail_worker
 
 _BROWSER = {"X-Relay-Request": "1"}
 
@@ -105,6 +107,26 @@ def test_mailbox_config_is_protected_and_never_returns_the_credential(
                     "last_sync_result": None,
                     "last_sync_count": None,
                 }
+                operations = viewer.get("/api/v1/health/operations").json()
+                assert operations["mailbox"] == {**status.json(), "poll_minutes": 10}
+
+            monkeypatch.setattr(sys, "argv", ["relay.workers.mail", "--once"])
+            settings = MagicMock()
+            settings.cipher.side_effect = ValueError
+            monkeypatch.setattr(mail_worker, "get_mail_settings", lambda: settings)
+            with pytest.raises(SystemExit, match="1"):
+                mail_worker.main()
+            assert client.get("/api/v1/mailbox/status").json()["last_sync_result"] == "sync_failed"
+
+            revision = enabled_sync_revision()
+            assert revision is not None
+            record_sync_result(revision, "ok", 2)
+            assert client.get("/api/v1/mailbox/status").json()["last_sync_count"] == 2
+            record_sync_result(revision, "uidvalidity_changed", None)
+            paused = client.get("/api/v1/mailbox/status").json()
+            assert paused["last_sync_result"] == "uidvalidity_changed"
+            assert paused["enabled"] is False
+
             edited = client.put(
                 "/api/v1/mailbox",
                 headers=headers,

@@ -154,6 +154,10 @@ def test_replay_recovers_transaction_and_deduplicates_archive(
         detail = client.get(f"{path}/emails/{first.mail_id}").json()
         attachment = detail["attachments"][0]
         assert attachment["job_state"] == "succeeded"
+        status = client.get("/api/v1/health/operations").json()
+        assert status["parsing"]["succeeded"] == 2
+        assert status["parsing"]["pending"] == status["parsing"]["expired"] == 0
+        assert status["parsing"]["last_success_at"] is not None
         file_path = f"{path}/attachments/{attachment['id']}"
         assert client.get(file_path + "/file").content == workbook.read_bytes()
         rows = client.get(file_path + "/quantities").json()

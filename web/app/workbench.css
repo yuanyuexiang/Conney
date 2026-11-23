@@ -22,8 +22,55 @@
 .brand img { display: block; width: 124px; height: auto; flex: none; }
 .brand-divider { flex: none; width: 1px; height: 21px; background: var(--border); }
 .product-name { font-size: .94rem; font-weight: 660; white-space: nowrap; }
-.topbar-meta .button { min-height: 34px; }
-.account-identity { font-size: .82rem; color: var(--secondary); white-space: nowrap; }
+.account-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  min-height: 38px;
+  min-width: 0;
+  padding: .24rem .45rem .24rem .3rem;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font-size: .85rem;
+  font-weight: 650;
+}
+.account-trigger:hover, .account-trigger[aria-expanded="true"] {
+  border-color: var(--border);
+  background: var(--surface);
+}
+.account-trigger-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--blue-light);
+  color: var(--blue-dark);
+}
+.account-trigger-name { max-width: min(10.5rem, 28vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-trigger-chevron { flex: none; color: var(--muted); font-size: .64rem; }
+.account-popover-menu { min-width: 188px; }
+.account-menu-info { display: grid; gap: .12rem; max-width: 205px; padding-bottom: .45rem; border-bottom: 1px solid var(--border); }
+.account-menu-info strong { overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }
+.account-menu-info span { color: var(--muted); font-size: .78rem; }
+.account-dialog-body .account-form label { display: grid; gap: .37rem; color: var(--ink); font-size: .87rem; font-weight: 620; }
+.account-dialog-body .account-form input, .account-dialog-body .account-form select {
+  width: 100%;
+  min-height: 41px;
+  padding: .48rem .65rem;
+  border: 1px solid #cbd8e3;
+  border-radius: 6px;
+  background: white;
+  color: var(--ink);
+  font-size: 1rem;
+}
+.account-form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .55rem; margin-top: .3rem; }
+.user-list-heading { justify-content: flex-start; flex-wrap: wrap; }
+.user-list-heading h2 { font-size: 1rem; font-weight: 680; }
+.user-list-heading .button { margin-inline-start: auto; }
 .connection {
   display: inline-flex;
   align-items: center;
@@ -38,11 +85,13 @@
 .connection.unavailable .connection-dot { background: #bd4340; }
 .sync-indicator {
   min-height: 32px;
+  min-width: 0;
   padding: .2rem .65rem;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--surface);
 }
+.sync-indicator-label { overflow: hidden; text-overflow: ellipsis; }
 .sync-indicator time { padding-left: .5rem; border-left: 1px solid var(--border); font-variant-numeric: tabular-nums; }
 
 .body-layout { display: grid; grid-template-columns: 164px minmax(0, 1fr); flex: 1; min-width: 0; }
@@ -304,6 +353,66 @@
 .archive-detail { border: 1px solid var(--border); border-radius: 8px; background: white; }
 .workbench-pager { padding: .8rem; text-align: center; }
 
+.operations-page { line-height: 1.5; }
+.operation-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .45rem 1rem;
+  padding: .72rem 1rem;
+  margin-bottom: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: white;
+}
+.operation-checked-at { margin-left: auto; color: var(--muted); font-size: .81rem; }
+.operation-signal {
+  gap: .4rem;
+  width: fit-content;
+  padding: .2rem .55rem;
+  border-radius: 5px;
+  background: #f0f4f8;
+  font-size: .78rem;
+  font-weight: 650;
+  white-space: normal;
+}
+.operation-signal.ready { color: #226246; background: #e6f4eb; }
+.operation-signal.attention { color: #765008; background: #fff3da; }
+.operation-signal.unavailable { color: #96342f; background: #fcebe8; }
+.operation-group { margin-top: 1.45rem; }
+.operation-group h2 { margin-bottom: .65rem; font-size: 1rem; font-weight: 690; }
+.operation-grid { display: grid; gap: .72rem; }
+.component-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr)); }
+.workflow-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 17.5rem), 1fr)); }
+.operation-card {
+  min-width: 0;
+  padding: .9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: white;
+}
+.operation-card-heading { display: flex; align-items: center; gap: .6rem; margin-bottom: .62rem; }
+.operation-card-heading h3 { font-size: .94rem; font-weight: 670; }
+.operation-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 31px;
+  height: 31px;
+  border-radius: 6px;
+  background: var(--blue-light);
+  color: var(--blue-dark);
+}
+.operation-detail { margin-top: .56rem; color: var(--muted); font-size: .83rem; overflow-wrap: anywhere; }
+.operation-detail time, .operation-summary time { font-variant-numeric: tabular-nums; }
+.operation-facts, .operation-counters { margin: .55rem 0; }
+.operation-facts > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .4rem; }
+.operation-facts dd, .operation-counters dd { margin: 0; color: var(--ink); }
+.operation-counters { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .35rem; }
+.operation-counters dt { font-size: .75rem; }
+.operation-counters dd { font-size: 1.05rem; font-weight: 680; font-variant-numeric: tabular-nums; }
+.operation-link { margin-top: .6rem; }
+
 @media (min-width: 761px) {
   .app-shell { height: 100dvh; }
   .body-layout { min-height: 0; }
@@ -312,9 +421,6 @@
   .queue-layout .mail-list { display: flex; flex-direction: column; min-height: 0; }
   .queue-layout .mail-items, .queue-layout .mail-detail { overflow-y: auto; }
   .queue-list-header { flex: none; }
-}
-@media (max-width: 960px) {
-  .account-identity { display: none; }
 }
 @media (max-width: 760px) {
   .topbar { flex-wrap: wrap; }
@@ -337,6 +443,7 @@
 @media (max-width: 500px) {
   .topbar { gap: .5rem; }
   .topbar-meta { width: 100%; justify-content: space-between; }
+  .sync-indicator time { display: none; }
   .queue-summary { gap: .4rem; }
   .queue-metric { grid-template-columns: 1fr; gap: .42rem; align-content: start; padding: .62rem .48rem; font-size: .75rem; }
   .queue-metric-icon { width: 27px; height: 27px; }

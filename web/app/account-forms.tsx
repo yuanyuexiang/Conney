@@ -75,7 +75,12 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: User) => void }) {
   );
 }
 
-export function PasswordForm({ onUpdated, required }: { onUpdated: (user: User) => void; required: boolean }) {
+export function PasswordForm({ onUpdated, required, onClose, onSavingChange }: {
+  onUpdated: (user: User) => void;
+  required: boolean;
+  onClose?: () => void;
+  onSavingChange?: (saving: boolean) => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
@@ -89,6 +94,7 @@ export function PasswordForm({ onUpdated, required }: { onUpdated: (user: User) 
       return;
     }
     setBusy(true);
+    onSavingChange?.(true);
     setError("");
     setDone(false);
     try {
@@ -103,19 +109,37 @@ export function PasswordForm({ onUpdated, required }: { onUpdated: (user: User) 
       setError(messageOf(reason));
     } finally {
       setBusy(false);
+      onSavingChange?.(false);
     }
   }
+
+  const success = <p className="notice" role="status">密码已修改，其他登录会话已退出。</p>;
+  if (done && onClose) return (
+    <div className="account-form">
+      {success}
+      <div className="account-form-actions">
+        <button type="button" className="button primary-button" onClick={onClose} autoFocus>完成</button>
+      </div>
+    </div>
+  );
+
+  const submitButton = <button className="button primary-button" type="submit" disabled={busy}>
+    {busy ? "保存中…" : "保存新密码"}
+  </button>;
 
   return (
     <form className="account-form" onSubmit={(event) => void submit(event)}>
       {required && <p className="field-hint">首次登录请先替换临时密码。</p>}
-      <label>当前密码<input name="current" type="password" autoComplete="current-password" required maxLength={128} /></label>
-      <label>新密码<input name="replacement" type="password" autoComplete="new-password" minLength={8} maxLength={128} required /></label>
-      <label>确认新密码<input name="confirm" type="password" autoComplete="new-password" minLength={8} maxLength={128} required /></label>
+      <label>当前密码<input name="current" type="password" autoComplete="current-password" required maxLength={128} disabled={busy} /></label>
+      <label>新密码<input name="replacement" type="password" autoComplete="new-password" minLength={8} maxLength={128} required disabled={busy} /></label>
+      <label>确认新密码<input name="confirm" type="password" autoComplete="new-password" minLength={8} maxLength={128} required disabled={busy} /></label>
       <p className="field-hint">密码至少 8 个字符。</p>
       {error && <p className="notice failed" role="alert">{error}</p>}
-      {done && <p className="notice" role="status">密码已修改，其他登录会话已退出。</p>}
-      <button className="button primary-button" type="submit" disabled={busy}>{busy ? "保存中…" : "保存新密码"}</button>
+      {done && success}
+      {onClose ? <div className="account-form-actions">
+        <button type="button" className="button" onClick={onClose} disabled={busy}>取消</button>
+        {submitButton}
+      </div> : submitButton}
     </form>
   );
 }

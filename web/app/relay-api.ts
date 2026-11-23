@@ -21,7 +21,7 @@ const messages: Record<string, string> = {
   username_exists: "此用户名已存在。",
   cannot_change_own_access: "请使用其他管理员账号修改此账号的权限。",
   user_not_found: "该用户不存在，请刷新后重试。",
-  use_own_password_change: "请使用「修改密码」更新当前账号。",
+  use_own_password_change: "请从右上角账号菜单选择「修改密码」。",
   mailbox_admin_unavailable: "邮箱加密密钥未配置，请联系部署管理员。",
   mailbox_storage_unavailable: "邮箱配置暂不可用，请稍后重试。",
   mailbox_invalid_fields: "请检查邮箱地址、文件夹、日期和轮询间隔。",
@@ -30,6 +30,7 @@ const messages: Record<string, string> = {
   mailbox_not_configured: "请先保存邮箱配置。",
   mailbox_config_changed: "邮箱配置已修改，请刷新后重新测试。",
   mailbox_test_required: "请通过连接测试后再启用采集。",
+  operations_unavailable: "暂时无法读取运行监测数据。",
 };
 
 export class RelayRequestError extends Error {
