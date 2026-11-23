@@ -12,7 +12,41 @@ docker compose --env-file .env -f deployments/docker-compose.yml up --build --wa
 
 默认入口为 `http://127.0.0.1:8080`。通过 `/api/v1/health/live` 检查 API 进程，通过 `/api/v1/health/ready` 检查数据库连接和迁移基线。Compose 由 `migrate` 容器先执行迁移，再启动 API。该配置用于本地开发，客户部署的 HTTPS、备份和监控安排见工作地图。
 
-首页是「邮件与附件」工作台。表格、附件和重试操作使用演示数据，系统状态读取本机 API。康尼新能源 Logo 来自[客户官网](https://www.knn-nj.com/skin/images/logo.png)，在本地镜像中随前端提供。
+登录后默认进入「收件记录」，可查看本机归档邮件、附件和原始数量记录。「邮件与附件」继续保留为标注了演示数据的工作台。系统状态读取本机 API。康尼新能源 Logo 来自[客户官网](https://www.knn-nj.com/skin/images/logo.png)，登录页充电场景来自[官网首页横幅](https://www.knn-nj.com/UploadFiles/2025/2025091210160744120.jpg)。两份素材均随本地前端镜像提供。
+
+## 登录与用户管理
+
+已有本地环境可使用 `admin` 登录，首次登录使用本机 `.env` 中的 `RELAY_INITIAL_ADMIN_PASSWORD`，随后按页面提示修改。改密成功后可从 `.env` 删除临时密码。查询用户可以查看归档邮件、原始数量记录和下载原件。管理员可以配置邮箱、创建用户、修改角色、停用账号和重置临时密码。
+
+全新部署初始化一次管理员。命令在终端安全输入临时密码：
+
+```sh
+docker compose --env-file .env -f deployments/docker-compose.yml exec api python -m relay.auth.bootstrap
+```
+
+为邮箱授权码生成并保管一把固定的 Fernet 密钥。将以下命令生成的值填写到 `.env` 的 `RELAY_MAIL_ENCRYPTION_KEY` 后重建容器。恢复数据库备份时要使用同一密钥：
+
+```sh
+uv run --locked python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+```
+
+本地入口仅监听回环地址。客户环境启用 HTTPS，并设置 `RELAY_COOKIE_SECURE=true`。
+
+## 邮箱配置和采集
+
+管理员进入「邮箱配置」，填写客户 263 邮箱地址、客户端授权码、文件夹和历史采集起始日期，依次点击「保存配置」「测试连接」「启动采集」。Compose 默认启动 Mail Worker，连接测试通过且管理员启用采集后才打开邮箱开始同步。暂停操作会停止后续邮件读取，正在读取的单封邮件可以收尾。保存新配置会暂停采集，重新测试后再启用。
+
+Mail Worker 使用只读 IMAP，以 UID 游标增量同步。服务器返回的 UIDVALIDITY 变化时暂停该文件夹的同步，等待核对旧游标。Parser Worker 支持 Vitesco、DRX、JLR DELFOR、JLR DELJIT 和 Kroschu 五份样本对应的结构。JLR 和 Kroschu 的六位日期原样保留，等客户确认世纪规则后再规范化。归档卷 `attachment-archive` 和数据库卷 `postgres-data` 应成对备份与恢复。
+
+可以用本地 `.eml` 重放验证，无需连接 263。以下示例在仓库根目录运行，替换邮件文件路径即可，同一 UID 重放不会新增接收记录：
+
+```sh
+docker compose --env-file .env -f deployments/docker-compose.yml run --rm --no-deps \
+  -v "/absolute/path/to/forecast.eml:/tmp/forecast.eml:ro" mail-worker \
+  python -m relay.workers.replay /tmp/forecast.eml --uid 1
+```
+
+首次回放后在「收件记录」刷新即可查看。每封不同的本地重放邮件使用一个新的 UID。
 
 ## 宿主机开发
 

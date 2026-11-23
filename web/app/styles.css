@@ -339,3 +339,182 @@ tr:last-child td { border-bottom: 0; }
   .product-name { font-size: .8125rem; }
   .demo-label { padding-inline: .28rem; }
 }
+
+.mailbox-card { max-width: 700px; padding: 1.2rem; }
+.mailbox-card h2 { display: flex; align-items: center; gap: .5rem; font-size: 1.05rem; font-weight: 680; }
+.mailbox-card h2 .anticon { color: var(--blue-dark); }
+.mailbox-card > .field-hint { margin-top: .55rem; }
+.mailbox-unlock { max-width: 430px; }
+.mailbox-unlock > label { margin-top: 1rem; }
+.mailbox-unlock > .button { margin-top: .9rem; }
+.mailbox-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .8rem 1rem;
+  border: 0;
+  min-width: 0;
+  margin: 1.15rem 0;
+  padding: 0;
+}
+.mailbox-card label { display: flex; flex-direction: column; min-width: 0; gap: .35rem; font-size: .875rem; color: var(--ink); }
+.mailbox-card input, .mailbox-card select {
+  min-width: 0;
+  width: 100%;
+  min-height: 39px;
+  padding: .45rem .58rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: white;
+  color: var(--ink);
+  font: inherit;
+}
+.mailbox-card input[readonly] { background: var(--surface); color: var(--secondary); }
+.mailbox-card select {
+  appearance: none;
+  padding-right: 1.65rem;
+  background: linear-gradient(45deg, transparent 50%, var(--muted) 50%) right 15px center / 5px 5px no-repeat,
+              linear-gradient(135deg, var(--muted) 50%, transparent 50%) right 10px center / 5px 5px no-repeat #fff;
+}
+.wide-field { grid-column: 1 / -1; }
+.field-hint { color: var(--muted); font-size: .8125rem; line-height: 1.55; }
+.mailbox-notice { margin: .8rem 0 0; }
+.mailbox-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .55rem; margin-top: 1rem; }
+.primary-button { border-color: var(--blue); background: var(--blue); color: white; }
+.primary-button:hover { border-color: var(--blue-dark); background: var(--blue-dark); }
+@media (max-width: 460px) { .mailbox-fields { grid-template-columns: minmax(0, 1fr); } }
+
+.intake-detail-header { padding-bottom: 1.15rem; }
+.intake-attachment { margin-bottom: .9rem; }
+.intake-attachment .attachment-card { flex-wrap: wrap; }
+.intake-attachment > .field-hint { margin-top: .35rem; }
+
+.auth-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.28fr) minmax(0, 1fr);
+  min-height: 100dvh;
+  background: #fff;
+}
+.auth-cover {
+  position: relative;
+  display: flex;
+  align-items: center;
+  isolation: isolate;
+  min-width: 0;
+  min-height: 100%;
+  padding: clamp(2rem, 6.5vw, 7rem);
+  background:
+    linear-gradient(90deg, rgba(6, 27, 48, .91), rgba(6, 34, 58, .45) 76%, rgba(5, 29, 50, .3)),
+    linear-gradient(0deg, rgba(5, 26, 49, .7), transparent 73%),
+    url("/brand/knn-charging-campus.jpg") 41% center / cover no-repeat,
+    #0b2943;
+  color: #fff;
+}
+.auth-cover-copy { max-width: 39rem; margin-top: -5vh; }
+.auth-wordmark {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  color: #d7edfc;
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: .12em;
+}
+.auth-wordmark::before { content: ""; width: 2rem; height: 2px; background: #70c5f2; }
+.auth-cover-title {
+  margin-top: 1.65rem;
+  font-size: clamp(2.55rem, 4.3vw, 4.5rem);
+  font-weight: 730;
+  letter-spacing: -.045em;
+  line-height: 1.17;
+}
+.auth-cover-description {
+  margin-top: 1.35rem;
+  color: #e5f1fa;
+  font-size: clamp(.95rem, 1.3vw, 1.15rem);
+  line-height: 1.55;
+}
+.auth-panel {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  align-items: center;
+  min-width: 0;
+  min-height: 30rem;
+  padding: clamp(1.7rem, 4.15vw, 4rem) clamp(1.5rem, 5.7vw, 5.7rem);
+}
+.auth-brand { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: .8rem; }
+.auth-brand img { display: block; width: min(100%, 178px); height: auto; }
+.auth-content { width: min(100%, 25rem); margin: 0 auto; padding: clamp(2rem, 6vh, 4.3rem) 0; }
+.auth-content h1 { color: #132b42; font-size: clamp(1.8rem, 3vw, 2.4rem); font-weight: 720; letter-spacing: -.045em; line-height: 1.24; }
+.auth-instructions { margin-top: .75rem; color: var(--muted); font-size: .9375rem; line-height: 1.55; }
+.auth-footer { color: var(--muted); font-size: .8125rem; }
+.sign-in-form { display: grid; margin-top: 2rem; }
+.sign-in-form label, .auth-content .account-form label { color: var(--ink); font-weight: 630; font-size: .875rem; }
+.sign-in-form > label { margin-bottom: .5rem; }
+.sign-in-form > label:not(:first-child) { margin-top: 1.2rem; }
+.auth-content input {
+  width: 100%;
+  min-width: 0;
+  height: 3rem;
+  border: 1px solid #cbd8e3;
+  border-radius: 7px;
+  padding: .72rem .85rem;
+  background: #fff;
+  color: var(--ink);
+  font-size: 1rem;
+}
+.auth-content input::placeholder { color: #65788a; }
+.auth-content input:focus-visible { border-color: var(--blue); outline: 2px solid #7ec5eb; outline-offset: 1px; }
+.auth-password-field { position: relative; }
+.auth-password-field input { padding-right: 3.1rem; }
+.auth-password-toggle {
+  position: absolute;
+  inset: .25rem .25rem .25rem auto;
+  display: grid;
+  place-items: center;
+  width: 2.55rem;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+}
+.auth-password-toggle:focus-visible { position: absolute; z-index: 1; }
+.auth-password-toggle:hover { background: var(--blue-light); color: var(--blue-dark); }
+.auth-content .auth-submit { margin-top: 1.5rem; min-height: 3rem; font-size: 1rem; font-weight: 650; }
+.auth-content .notice { margin: .75rem 0 0; }
+.auth-content > .button { margin-top: .8rem; }
+.account-form { display: grid; gap: .8rem; margin-top: 1rem; }
+.account-form .button { justify-self: start; }
+.account-form .notice { margin: 0; }
+.auth-content .account-form label { display: grid; gap: .4rem; }
+@media (max-width: 850px) {
+  .auth-layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); }
+  .auth-cover, .auth-panel { padding-inline: clamp(1.4rem, 4.2vw, 2.8rem); }
+}
+@media (max-width: 650px) {
+  .auth-layout { display: flex; flex-direction: column; }
+  .auth-cover {
+    min-height: 0;
+    padding: 1.65rem 1.4rem;
+    background-position: center, center, center 49%, center;
+  }
+  .auth-cover-copy { margin-top: 0; }
+  .auth-cover-title { margin-top: .55rem; font-size: clamp(1.45rem, 5.4vw, 2rem); letter-spacing: -.025em; }
+  .auth-cover-title br { display: none; }
+  .auth-cover-description { display: none; }
+  .auth-wordmark { font-size: .8125rem; }
+  .auth-panel { flex: 1; min-height: 0; padding: 1.4rem clamp(1.35rem, 6vw, 2rem) 1.2rem; }
+  .auth-brand img { width: 145px; }
+  .auth-content { padding: 1.65rem 0 2.25rem; }
+  .sign-in-form { margin-top: 1.4rem; }
+}
+.mailbox-card label.checkbox-row { flex-direction: row; align-items: center; }
+.mailbox-card .checkbox-row input { width: 1rem; min-height: 1rem; }
+.user-password-form { margin-top: 1.4rem; border-top: 1px solid var(--border); padding-top: 1.2rem; }
+.account-identity { font-size: .875rem; color: var(--secondary); white-space: nowrap; }
+@media (max-width: 960px) { .account-identity { display: none; } }
+@media (max-width: 480px) {
+  .topbar-meta { gap: .35rem; }
+  .topbar-meta .demo-label { display: none; }
+  .topbar .button { padding-inline: .45rem; }
+}

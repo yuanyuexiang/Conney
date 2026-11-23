@@ -9,12 +9,20 @@ import {
   FileExcelOutlined,
   FileTextOutlined,
   InboxOutlined,
+  MailOutlined,
   ReloadOutlined,
   SearchOutlined,
   TableOutlined,
+  TeamOutlined,
+  KeyOutlined,
 } from "@ant-design/icons";
 import Image from "next/image";
 import { useEffect, useState } from "react";
+import { AccountLayout, PasswordForm, SignIn } from "./account-forms";
+import { messageOf, relayRequest, RelayRequestError, roleLabels, type User } from "./relay-api";
+import { UserManagement } from "./user-management";
+import { IntakeWorkspace } from "./intake-workspace";
+import { MailboxSettings } from "./mailbox-settings";
 import {
   demoMail,
   statusLabels,
@@ -23,10 +31,14 @@ import {
 } from "./workspace-data";
 
 const sections = [
+  { id: "intake", label: "收件记录", icon: FileTextOutlined },
   { id: "overview", label: "工作概览", icon: AppstoreOutlined },
   { id: "mail", label: "邮件与附件", icon: InboxOutlined },
   { id: "plans", label: "交付计划", icon: TableOutlined },
   { id: "issues", label: "异常任务", icon: ExclamationCircleOutlined },
+  { id: "mailbox", label: "邮箱配置", icon: MailOutlined },
+  { id: "users", label: "用户管理", icon: TeamOutlined },
+  { id: "password", label: "修改密码", icon: KeyOutlined },
   { id: "system", label: "系统状态", icon: CloudServerOutlined },
 ] as const;
 type Section = (typeof sections)[number]["id"];
@@ -87,8 +99,87 @@ function PlanTable({ records, includeTemplate = false }: { records: MailRecord[]
   );
 }
 
+function Brand() {
+  return (
+    <div className="brand">
+      <Image src="/brand/knn-logo.png" width={152} height={38} alt="康尼新能源" unoptimized priority />
+      <span className="brand-divider" />
+      <span className="product-name">EDI 交付计划管理</span>
+    </div>
+  );
+}
+
 export default function Home() {
-  const [section, setSection] = useState<Section>("mail");
+  const [user, setUser] = useState<User | null>();
+  const [logoutError, setLogoutError] = useState("");
+  const [leaving, setLeaving] = useState(false);
+  const [sessionError, setSessionError] = useState("");
+  const [sessionCheck, setSessionCheck] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    relayRequest<User>("/auth/me", { signal: controller.signal })
+      .then(setUser)
+      .catch((error) => {
+        if (!controller.signal.aborted) {
+          if (error instanceof RelayRequestError && error.status === 401) setUser(null);
+          else setSessionError(messageOf(error));
+        }
+      });
+    function expire() { setUser(null); }
+    window.addEventListener("relay-session-expired", expire);
+    return () => {
+      controller.abort();
+      window.removeEventListener("relay-session-expired", expire);
+    };
+  }, [sessionCheck]);
+
+  async function logout() {
+    setLeaving(true);
+    setLogoutError("");
+    try {
+      await relayRequest("/auth/logout", { method: "POST" });
+      setUser(null);
+    } catch (error) {
+      setLogoutError(messageOf(error));
+    } finally {
+      setLeaving(false);
+    }
+  }
+
+  const exit = <button type="button" className="button" disabled={leaving} onClick={() => void logout()}>退出登录</button>;
+  if (user?.must_change_password) return (
+    <AccountLayout action={exit}>
+      <h1>修改临时密码</h1>
+      <PasswordForm required onUpdated={setUser} />
+      {logoutError && <p role="alert" className="notice failed">{logoutError}</p>}
+    </AccountLayout>
+  );
+
+  if (user === null) return <SignIn onSignedIn={setUser} />;
+
+  if (!user) return (
+    <AccountLayout>
+      <h1>登录工作台</h1>
+      {sessionError ? (
+        <>
+          <p role="alert" className="notice failed">{sessionError}</p>
+          <button type="button" className="button" onClick={() => { setSessionError(""); setSessionCheck((value) => value + 1); }}>重试</button>
+        </>
+      ) : <p className="auth-instructions" role="status">正在检查登录状态…</p>}
+    </AccountLayout>
+  );
+
+  return <Workspace user={user} onUpdated={setUser} exit={exit} logoutError={logoutError} />;
+}
+
+function Workspace({ user, onUpdated, exit, logoutError }: {
+  user: User;
+  onUpdated: (user: User) => void;
+  exit: React.ReactNode;
+  logoutError: string;
+}) {
+  const [section, setSection] = useState<Section>("intake");
   const [records, setRecords] = useState(demoMail);
   const [selectedId, setSelectedId] = useState(demoMail[0].id);
   const [filter, setFilter] = useState<Filter>("all");
@@ -122,7 +213,9 @@ export default function Home() {
   );
   const selected = visible.find((mail) => mail.id === selectedId) ?? visible[0];
   const showWorkspace = section === "mail" || section === "issues";
-  const activeSection = sections.find(({ id }) => id === section)!;
+  const allowedSections = sections.filter(({ id }) => user.role === "admin" || (id !== "users" && id !== "mailbox"));
+  const activeSection = allowedSections.find(({ id }) => id === section) ?? allowedSections[0];
+  const demoSection = section === "overview" || section === "mail" || section === "plans" || section === "issues";
 
   function navigate(id: Section) {
     setSection(id);
@@ -155,23 +248,22 @@ export default function Home() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <div className="brand">
-          <Image src="/brand/knn-logo.png" width={152} height={38} alt="康尼新能源" unoptimized priority />
-          <span className="brand-divider" />
-          <span className="product-name">EDI 交付计划管理</span>
-        </div>
+        <Brand />
         <div className="topbar-meta">
-          <span className="demo-label" title="邮件、附件及交付记录为演示数据">演示数据</span>
+          {demoSection && <span className="demo-label" title="邮件、附件及交付记录为演示数据">演示数据</span>}
           <span className={`connection ${connection}`} role="status">
             <span className="connection-dot" />{connectionLabels[connection]}
           </span>
+          <span className="account-identity">{user.username} · {roleLabels[user.role]}</span>
+          {exit}
         </div>
       </header>
+      {logoutError && <p className="notice failed" role="alert">{logoutError}</p>}
 
       <div className="body-layout">
         <nav className="sidebar" aria-label="主导航">
           <div className="sidebar-label">工作台</div>
-          {sections.map(({ id, label, icon: Icon }) => (
+          {allowedSections.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               type="button"
@@ -187,7 +279,7 @@ export default function Home() {
           <span className="sidebar-footer">Relay <span>·</span> 康尼新能源</span>
         </nav>
 
-        {showWorkspace ? (
+        {section === "intake" ? <IntakeWorkspace /> : showWorkspace ? (
           <main className={`workspace ${mobileDetail && selected ? "detail-open" : ""}`}>
             <aside className="mail-list" aria-label={`${activeSection.label}列表`}>
               <div className="list-heading">
@@ -325,6 +417,9 @@ export default function Home() {
                 <PlanTable records={records} includeTemplate />
               </section>
             )}
+            {section === "mailbox" && user.role === "admin" && <MailboxSettings />}
+            {section === "users" && user.role === "admin" && <UserManagement current={user} />}
+            {section === "password" && <div className="page-card mailbox-card"><PasswordForm required={false} onUpdated={onUpdated} /></div>}
             {section === "system" && (
               <div className="system-card page-card">
                 <div><h3>API 与数据库</h3><span role="status" className={`connection ${connection}`}><span className="connection-dot" />{connectionLabels[connection]}</span></div>

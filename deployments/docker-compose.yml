@@ -5,7 +5,7 @@ x-backend: &backend
   build:
     context: ..
     dockerfile: deployments/backend.Dockerfile
-  environment:
+  environment: &database-environment
     RELAY_DB_HOST: postgres
     RELAY_DB_NAME: ${RELAY_DB_NAME:-relay}
     RELAY_DB_USER: ${RELAY_DB_USER:-relay}
@@ -36,6 +36,13 @@ services:
 
   api:
     <<: *backend
+    environment:
+      <<: *database-environment
+      RELAY_ARCHIVE_DIR: /var/lib/relay/attachments
+      RELAY_COOKIE_SECURE: ${RELAY_COOKIE_SECURE:-false}
+      RELAY_MAIL_ENCRYPTION_KEY: ${RELAY_MAIL_ENCRYPTION_KEY:-}
+    volumes:
+      - attachment-archive:/var/lib/relay/attachments:ro
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -44,6 +51,33 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
+    restart: unless-stopped
+
+  parser-worker:
+    <<: *backend
+    environment:
+      <<: *database-environment
+      RELAY_ARCHIVE_DIR: /var/lib/relay/attachments
+    command: ["python", "-m", "relay.workers.parser"]
+    volumes:
+      - attachment-archive:/var/lib/relay/attachments:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  mail-worker:
+    <<: *backend
+    environment:
+      <<: *database-environment
+      RELAY_MAIL_ENCRYPTION_KEY: ${RELAY_MAIL_ENCRYPTION_KEY:-}
+      RELAY_ARCHIVE_DIR: /var/lib/relay/attachments
+    command: ["python", "-m", "relay.workers.mail"]
+    volumes:
+      - attachment-archive:/var/lib/relay/attachments
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   web:
@@ -72,3 +106,4 @@ services:
 
 volumes:
   postgres-data:
+  attachment-archive:

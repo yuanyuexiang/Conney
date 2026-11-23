@@ -13,7 +13,9 @@ RUN uv sync --locked --no-dev --no-install-project
 COPY src/ src/
 COPY migrations/ migrations/
 COPY alembic.ini .
-RUN uv sync --locked --no-dev --no-editable && useradd --system --uid 10001 relay
+RUN uv sync --locked --no-dev --no-editable \
+    && useradd --system --uid 10001 relay \
+    && install -d -m 0750 -o relay -g relay /var/lib/relay/attachments
 USER relay
 EXPOSE 8000
 CMD ["uvicorn", "relay.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
