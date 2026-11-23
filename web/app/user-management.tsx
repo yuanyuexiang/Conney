@@ -83,7 +83,7 @@ export function UserManagement({ current }: { current: User }) {
           <label>用户名<input name="username" required minLength={3} maxLength={64} autoComplete="off" /></label>
           <p className="field-hint">以英文字母开头，可用小写字母、数字、下划线、点或短横线。</p>
           <label>角色<select name="role" defaultValue="viewer"><option value="viewer">查询用户</option><option value="admin">管理员</option></select></label>
-          <label>临时密码<input name="password" type="password" minLength={12} maxLength={128} autoComplete="new-password" required /></label>
+          <label>临时密码<input name="password" type="password" minLength={8} maxLength={128} autoComplete="new-password" required /></label>
           <button type="submit" className="button primary-button" disabled={busy || !users}>创建账号</button>
         </form>
       </section>
@@ -97,7 +97,7 @@ export function UserManagement({ current }: { current: User }) {
             <button type="submit" className="button primary-button" disabled={busy}>保存权限</button>
           </form>
           <form className="account-form user-password-form" onSubmit={(event) => void save(event, "password")}>
-            <label>新临时密码<input name="password" type="password" minLength={12} maxLength={128} autoComplete="new-password" required /></label>
+            <label>新临时密码<input name="password" type="password" minLength={8} maxLength={128} autoComplete="new-password" required /></label>
             <button type="submit" className="button" disabled={busy}>重置密码</button>
           </form>
         </section>

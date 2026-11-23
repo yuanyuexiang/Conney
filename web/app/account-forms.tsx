@@ -22,7 +22,7 @@ export function AccountLayout({ children, action }: { children: ReactNode; actio
           {action}
         </header>
         <div className="auth-content">{children}</div>
-        <footer className="auth-footer">南京康尼新能源汽车零部件有限公司</footer>
+        <footer className="auth-footer">© 南京康尼新能源汽车零部件有限公司</footer>
       </section>
     </main>
   );
@@ -110,9 +110,9 @@ export function PasswordForm({ onUpdated, required }: { onUpdated: (user: User) 
     <form className="account-form" onSubmit={(event) => void submit(event)}>
       {required && <p className="field-hint">首次登录请先替换临时密码。</p>}
       <label>当前密码<input name="current" type="password" autoComplete="current-password" required maxLength={128} /></label>
-      <label>新密码<input name="replacement" type="password" autoComplete="new-password" minLength={12} maxLength={128} required /></label>
-      <label>确认新密码<input name="confirm" type="password" autoComplete="new-password" minLength={12} maxLength={128} required /></label>
-      <p className="field-hint">密码至少 12 个字符。</p>
+      <label>新密码<input name="replacement" type="password" autoComplete="new-password" minLength={8} maxLength={128} required /></label>
+      <label>确认新密码<input name="confirm" type="password" autoComplete="new-password" minLength={8} maxLength={128} required /></label>
+      <p className="field-hint">密码至少 8 个字符。</p>
       {error && <p className="notice failed" role="alert">{error}</p>}
       {done && <p className="notice" role="status">密码已修改，其他登录会话已退出。</p>}
       <button className="button primary-button" type="submit" disabled={busy}>{busy ? "保存中…" : "保存新密码"}</button>

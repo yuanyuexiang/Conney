@@ -12,7 +12,7 @@ export const roleLabels: Record<Role, string> = { admin: "管理员", viewer: "�
 
 const messages: Record<string, string> = {
   invalid_login: "用户名或密码不正确，或账号已停用。",
-  invalid_user_fields: "请检查用户名格式。新密码须为 12 至 128 个字符。",
+  invalid_user_fields: "请检查用户名格式。新密码须为 8 至 128 个字符。",
   login_required: "登录已过期，请重新登录。",
   admin_required: "此操作需要管理员权限。",
   password_change_required: "请先修改临时密码。",

@@ -19,7 +19,7 @@ def main() -> None:
         values = NewUser(username=args.username, password=SecretStr(password), role="admin")
     except ValidationError:
         raise SystemExit(
-            "Use a valid username and a temporary password of 12–128 characters."
+            "Use a valid username and a temporary password of 8–128 characters."
         ) from None
     if create_user(values, bootstrap=True) is None:
         raise SystemExit("A user already exists. Sign in with an existing administrator.")

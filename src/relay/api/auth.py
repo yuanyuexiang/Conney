@@ -54,11 +54,11 @@ class Credentials(BaseModel):
 
 class ChangePassword(BaseModel):
     current_password: SecretStr = Field(min_length=1, max_length=128)
-    new_password: SecretStr = Field(min_length=12, max_length=128)
+    new_password: SecretStr = Field(min_length=8, max_length=128)
 
 
 class ResetPassword(BaseModel):
-    password: SecretStr = Field(min_length=12, max_length=128)
+    password: SecretStr = Field(min_length=8, max_length=128)
 
 
 def _set_session(response: Response, token: str) -> None:
