@@ -365,7 +365,7 @@ function MailDetail({ mail, refreshKey, onBack, archive, source, onDraftOpened }
 }
 
 const onboardingSteps = [
-  { title: "填写业务邮箱", description: "填写 263 邮箱、授权码、文件夹和历史采集起始日期。", icon: MailOutlined },
+  { title: "填写业务邮箱", description: "选择 263 或网易 163，填写邮箱、授权码、文件夹和历史采集起始日期。", icon: MailOutlined },
   { title: "测试连接", description: "确认系统可以通过 IMAP 只读访问指定文件夹。", icon: LinkOutlined },
   { title: "启动采集", description: "启用采集后，在收件档案中查看邮件和解析结果。", icon: CloudDownloadOutlined },
 ];

@@ -24,7 +24,7 @@ const messages: Record<string, string> = {
   use_own_password_change: "请从右上角账号菜单选择「修改密码」。",
   mailbox_admin_unavailable: "邮箱加密密钥未配置，请联系部署管理员。",
   mailbox_storage_unavailable: "邮箱配置暂不可用，请稍后重试。",
-  mailbox_invalid_fields: "请检查邮箱地址、文件夹、日期和轮询间隔。",
+  mailbox_invalid_fields: "请检查邮箱地址与 IMAP 服务器是否匹配，以及文件夹、日期和轮询间隔。",
   mailbox_credential_required: "首次配置或更换邮箱、服务器时，请填写授权码。",
   mailbox_credential_invalid: "已保存的授权码无法读取，请重新填写后保存。",
   mailbox_not_configured: "请先保存邮箱配置。",

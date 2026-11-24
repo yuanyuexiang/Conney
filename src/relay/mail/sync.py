@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlalchemy import text
 
 from relay.database.session import get_engine
-from relay.mail.connection import _encode_folder
+from relay.mail.connection import _encode_folder, identify_client
 from relay.mail.intake import MAX_MESSAGE_BYTES, MailIdentity, receive
 from relay.storage.archive import Archive
 
@@ -196,4 +196,6 @@ def sync_once(
         mailbox.host, 993, ssl_context=ssl.create_default_context(), timeout=10
     ) as client:
         client.login(mailbox.address, mailbox.password)
+        if not identify_client(client, mailbox.host):
+            raise MailProtocolError("IMAP client identification failed")
         return _sync_selected(client, mailbox, archive, keep_running)

@@ -6,7 +6,7 @@ import { messageOf, relayRequest } from "./relay-api";
 
 type Mailbox = {
   address: string;
-  host: "imap.263.net" | "imapw.263.net";
+  host: "imap.263.net" | "imapw.263.net" | "imap.163.com";
   folder: string;
   since: string;
   poll_minutes: number;
@@ -34,10 +34,11 @@ const initialMailbox: Mailbox = {
 
 const connectionMessages: Record<string, string> = {
   ok: "连接成功，已只读打开指定文件夹。",
-  auth_failed: "263 未接受此账号或授权码，请检查账号及 IMAP 授权。",
+  auth_failed: "邮箱服务商未接受此账号或授权码，请检查邮箱地址和 IMAP 授权。",
+  client_id_failed: "网易 163 未接受客户端标识，请稍后重试。",
   folder_unavailable: "账号已认证，但无法只读打开指定文件夹。",
   tls_failed: "邮件服务器的 TLS 连接验证失败。",
-  unreachable: "无法连接 263 邮件服务器，请检查网络或稍后重试。",
+  unreachable: "无法连接邮件服务器，请检查网络或稍后重试。",
 };
 
 const syncMessages: Record<string, string> = {
@@ -57,12 +58,18 @@ export function MailboxSettings({ onChanged }: { onChanged: () => void }) {
   const [pending, setPending] = useState<"load" | "save" | "test" | "sync" | null>("load");
   const [loaded, setLoaded] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [savedAccount, setSavedAccount] = useState<Pick<Mailbox, "address" | "host"> | null>(null);
+  const canKeepPassword = mailbox.has_password && mailbox.address.trim() === savedAccount?.address &&
+    mailbox.host === savedAccount.host;
+  const addressIs163 = /@163\.com$/i.test(mailbox.address.trim());
+  const providerMismatch = mailbox.address.includes("@") && addressIs163 !== (mailbox.host === "imap.163.com");
 
   useEffect(() => {
     const controller = new AbortController();
     relayRequest<Mailbox | null>("/mailbox", { signal: controller.signal })
       .then((saved) => {
         setMailbox(saved ?? initialMailbox);
+        setSavedAccount(saved);
         setLoaded(true);
       })
       .catch((error) => {
@@ -98,12 +105,24 @@ export function MailboxSettings({ onChanged }: { onChanged: () => void }) {
     setMessage(null);
   }
 
+  function editAddress(address: string) {
+    setMailbox((previous) => ({
+      ...previous, address,
+      host: /@163\.com$/i.test(address.trim()) ? "imap.163.com" : previous.host,
+    }));
+    setDirty(true);
+    setMessage(null);
+  }
+
   async function refresh() {
     setPending("load");
     setMessage(null);
     try {
       const saved = await relayRequest<Mailbox | null>("/mailbox");
       setMailbox(saved ?? initialMailbox);
+      setSavedAccount(saved);
+      setPassword("");
+      setDirty(false);
       setLoaded(true);
     } catch (error) {
       setMessage({ ok: false, text: messageOf(error) });
@@ -125,6 +144,7 @@ export function MailboxSettings({ onChanged }: { onChanged: () => void }) {
         }),
       });
       setMailbox(saved);
+      setSavedAccount(saved);
       setPassword("");
       setDirty(false);
       onChanged();
@@ -143,6 +163,7 @@ export function MailboxSettings({ onChanged }: { onChanged: () => void }) {
       const { result } = await relayRequest<{ result: string }>("/mailbox/connection-test", { method: "POST" });
       const saved = await relayRequest<Mailbox | null>("/mailbox");
       setMailbox(saved ?? initialMailbox);
+      setSavedAccount(saved);
       onChanged();
       setMessage({ ok: result === "ok", text: connectionMessages[result] ?? "无法确认连接结果。" });
     } catch (error) {
@@ -187,7 +208,7 @@ export function MailboxSettings({ onChanged }: { onChanged: () => void }) {
     <div className="mailbox-settings">
       <form className="page-card mailbox-card" onSubmit={(event) => void save(event)}>
         <div className="section-heading">
-          <h2><MailOutlined aria-hidden="true" /> 263 企业邮箱</h2>
+          <h2><MailOutlined aria-hidden="true" /> IMAP 采集邮箱</h2>
           <span className={`status ${mailbox.enabled ? "complete" : "queued"}`}>{mailbox.enabled ? "采集中" : "采集未启用"}</span>
         </div>
         <p className="field-hint">测试连接只读打开指定文件夹。保存新的配置会暂停采集，重新测试后可启用。</p>
@@ -195,18 +216,19 @@ export function MailboxSettings({ onChanged }: { onChanged: () => void }) {
         <fieldset className="mailbox-fields" disabled={!loaded || pending !== null}>
           <label className="wide-field">邮箱地址
             <input type="email" autoComplete="off" value={mailbox.address} required maxLength={254}
-              placeholder="edi@company.com" onChange={(event) => edit("address", event.target.value)} />
+              placeholder="edi@company.com 或 name@163.com" onChange={(event) => editAddress(event.target.value)} />
           </label>
           <label className="wide-field">邮箱授权码
             <input type="password" autoComplete="new-password" value={password} maxLength={512}
-              required={!mailbox.has_password}
-              placeholder={mailbox.has_password ? "留空保留已保存的授权码" : "输入客户端授权码"}
+              required={!canKeepPassword}
+              placeholder={canKeepPassword ? "留空保留已保存的授权码" : "输入客户端授权码"}
               onChange={(event) => { setPassword(event.target.value); setDirty(true); setMessage(null); }} />
           </label>
           <label>IMAP 服务器
             <select value={mailbox.host} onChange={(event) => edit("host", event.target.value as Mailbox["host"])}>
-              <option value="imap.263.net">imap.263.net</option>
-              <option value="imapw.263.net">imapw.263.net</option>
+              <option value="imap.263.net">263 企业邮箱 · imap.263.net</option>
+              <option value="imapw.263.net">263 企业邮箱 · imapw.263.net</option>
+              <option value="imap.163.com">网易 163 · imap.163.com</option>
             </select>
           </label>
           <label>连接方式<input type="text" value="TLS / 993" readOnly /></label>
@@ -216,9 +238,10 @@ export function MailboxSettings({ onChanged }: { onChanged: () => void }) {
             <input type="number" value={mailbox.poll_minutes || ""} min={1} max={60} required onChange={(event) => edit("poll_minutes", Number(event.target.value))} />
           </label>
         </fieldset>
+        {providerMismatch && <p className="field-hint" role="status">请将 @163.com 地址与「网易 163」服务器配对。</p>}
         {notice}
         <div className="mailbox-actions">
-          <button type="submit" className="button primary-button" disabled={!loaded || pending !== null || !dirty}>
+          <button type="submit" className="button primary-button" disabled={!loaded || pending !== null || !dirty || providerMismatch}>
             {pending === "save" ? "保存中…" : "保存配置"}
           </button>
           <button type="button" className="button" onClick={() => void testConnection()} disabled={pending !== null || dirty || !mailbox.has_password}>

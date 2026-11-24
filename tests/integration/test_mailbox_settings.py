@@ -19,9 +19,15 @@ _BROWSER = {"X-Relay-Request": "1"}
 
 
 @pytest.mark.skipif(os.environ.get("RELAY_TEST_DB") != "1", reason="Requires test PostgreSQL")
+@pytest.mark.parametrize(
+    ("address", "host"),
+    [("qa-relay@example.com", "imap.263.net"), ("qa-relay@163.com", "imap.163.com")],
+)
 def test_mailbox_config_is_protected_and_never_returns_the_credential(
     monkeypatch: pytest.MonkeyPatch,
     signed_in: Callable[[TestClient, Role], User],
+    address: str,
+    host: str,
 ) -> None:
     key = Fernet.generate_key()
     monkeypatch.setenv("RELAY_MAIL_ENCRYPTION_KEY", key.decode())
@@ -29,12 +35,11 @@ def test_mailbox_config_is_protected_and_never_returns_the_credential(
     monkeypatch.setattr(mailbox_api, "check_connection", check)
     get_mail_settings.cache_clear()
 
-    address = "qa-relay@example.com"
-    credential = "test-only-263-authorization-code"
+    credential = "test-only-imap-authorization-code"
     headers = _BROWSER
     payload = {
         "address": address,
-        "host": "imap.263.net",
+        "host": host,
         "folder": "INBOX",
         "since": "2026-11-01",
         "poll_minutes": 5,
@@ -56,6 +61,12 @@ def test_mailbox_config_is_protected_and_never_returns_the_credential(
             )
             assert invalid.status_code == 422
             assert credential not in invalid.text
+            wrong_host = "imap.263.net" if host == "imap.163.com" else "imap.163.com"
+            mismatch = client.put(
+                "/api/v1/mailbox", headers=headers, json={**payload, "host": wrong_host}
+            )
+            assert mismatch.status_code == 422
+            assert credential not in mismatch.text
 
             saved = client.put("/api/v1/mailbox", headers=headers, json=payload)
             assert saved.status_code == 200
@@ -83,7 +94,7 @@ def test_mailbox_config_is_protected_and_never_returns_the_credential(
             changed = client.put(
                 "/api/v1/mailbox",
                 headers=headers,
-                json={**payload, "address": "another@example.com", "password": None},
+                json={**payload, "address": "other-" + address, "password": None},
             )
             assert changed.status_code == 409
 
@@ -91,7 +102,7 @@ def test_mailbox_config_is_protected_and_never_returns_the_credential(
             assert blocked.status_code == 409
             result = client.post("/api/v1/mailbox/connection-test", headers=headers)
             assert result.json() == {"result": "ok"}
-            check.assert_called_once_with(address, "imap.263.net", "INBOX", credential)
+            check.assert_called_once_with(address, host, "INBOX", credential)
             enabled = client.put("/api/v1/mailbox/sync", headers=headers, json={"enabled": True})
             assert enabled.status_code == 200 and enabled.json()["enabled"]
             with TestClient(app) as viewer:

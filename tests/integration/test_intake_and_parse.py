@@ -236,16 +236,24 @@ def test_workbench_classifies_real_jobs_and_preserves_source_coordinates(
 
 
 @pytest.mark.skipif(os.environ.get("RELAY_TEST_DB") != "1", reason="Requires test PostgreSQL")
+@pytest.mark.parametrize(
+    ("address", "host"),
+    [("test@example.com", "imap.263.net"), ("test@163.com", "imap.163.com")],
+)
 def test_imap_cursor_only_advances_past_durable_messages(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     eml_and_workbook: tuple[bytes, Path],
+    address: str,
+    host: str,
 ) -> None:
     raw, _ = eml_and_workbook
-    mailbox = SyncMailbox("test@example.com", "imap.263.net", "INBOX", date(2026, 11, 1), 5, "test")
+    mailbox = SyncMailbox(address, host, "INBOX", date(2026, 11, 1), 5, "test")
+    source = {"source": mailbox.source}
     archive = Archive(tmp_path / "sync-archive")
     factory = MagicMock()
     client = factory.return_value.__enter__.return_value
+    client.xatom.return_value = ("OK", [b"identified"])
     client.select.return_value = ("OK", [b"3"])
     client.response.return_value = ("UIDVALIDITY", [b"7"])
     disconnect = True
@@ -274,22 +282,32 @@ def test_imap_cursor_only_advances_past_durable_messages(
     with pytest.raises(OSError, match="Simulated interruption"):
         sync_once(mailbox, archive)
     client.select.assert_called_once_with('"INBOX"', readonly=True)
+    commands = [call[0] for call in client.method_calls]
+    expected = ["login", "xatom", "select"] if host == "imap.163.com" else ["login", "select"]
+    assert commands[: len(expected)] == expected
     with get_engine().connect() as db:
-        assert db.scalar(text("SELECT last_uid FROM mail_sync_cursors")) == 20
+        cursor = text("SELECT last_uid FROM mail_sync_cursors WHERE source = :source")
+        assert db.scalar(cursor, source) == 20
 
     disconnect = False
     assert sync_once(mailbox, archive) == 2
     assert sync_once(mailbox, archive) == 0
     with get_engine().connect() as db:
-        assert db.scalar(text("SELECT last_uid FROM mail_sync_cursors")) == 22
+        assert db.scalar(cursor, source) == 22
         assert (
-            db.scalar(text("SELECT intake_error_code FROM received_mail WHERE uid = 22"))
+            db.scalar(
+                text(
+                    "SELECT intake_error_code FROM received_mail "
+                    "WHERE source = :source AND uid = 22"
+                ),
+                source,
+            )
             == "message_size"
         )
         assert (
             db.scalar(
                 text("SELECT count(*) FROM received_mail WHERE source = :source"),
-                {"source": mailbox.source},
+                source,
             )
             == 3
         )
@@ -298,7 +316,7 @@ def test_imap_cursor_only_advances_past_durable_messages(
     with pytest.raises(SyncResetRequired):
         sync_once(mailbox, archive)
     with get_engine().connect() as db:
-        assert db.execute(text("SELECT uidvalidity, last_uid FROM mail_sync_cursors")).one() == (
-            7,
-            22,
-        )
+        assert db.execute(
+            text("SELECT uidvalidity, last_uid FROM mail_sync_cursors WHERE source = :source"),
+            source,
+        ).one() == (7, 22)

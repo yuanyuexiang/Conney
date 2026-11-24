@@ -197,7 +197,7 @@ export function SystemStatus({ onConfigure, onViewQueue }: {
       <section className="operation-group" aria-labelledby="workflow-health">
         <h2 id="workflow-health">业务链路</h2>
         <div className="operation-grid workflow-grid">
-          <StatusCard title="263 邮箱同步" icon={<MailOutlined aria-hidden="true" />} badge={mailboxBadge}>
+          <StatusCard title="邮箱同步" icon={<MailOutlined aria-hidden="true" />} badge={mailboxBadge}>
             {mailbox && <dl className="operation-facts">
               <div><dt>轮询间隔</dt><dd>{mailbox.poll_minutes} 分钟</dd></div>
               <div><dt>最近一次同步</dt><dd>{mailbox.last_sync_at ? <Timestamp value={mailbox.last_sync_at} /> : "暂无记录"}</dd></div>

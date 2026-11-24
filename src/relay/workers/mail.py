@@ -23,7 +23,7 @@ _SETTINGS_INTERVAL = 5
 
 
 def main() -> None:
-    arguments = argparse.ArgumentParser(description="Synchronize one enabled 263 folder")
+    arguments = argparse.ArgumentParser(description="Synchronize one enabled IMAP folder")
     arguments.add_argument("--once", action="store_true", help="Synchronize at most one batch")
     flags = arguments.parse_args()
     logging.basicConfig(level=logging.INFO)

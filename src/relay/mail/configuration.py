@@ -1,17 +1,18 @@
 from datetime import date, datetime
 from functools import lru_cache
-from typing import Literal
+from typing import Literal, Self
 from uuid import UUID, uuid4
 
 from cryptography.fernet import Fernet
-from pydantic import BaseModel, EmailStr, Field, SecretStr, field_validator
+from pydantic import BaseModel, EmailStr, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import text
 
 from relay.database.session import get_engine
+from relay.mail.connection import NETEASE_HOST
 from relay.mail.sync import SyncMailbox
 
-MailboxHost = Literal["imap.263.net", "imapw.263.net"]
+MailboxHost = Literal["imap.263.net", "imapw.263.net", "imap.163.com"]
 
 
 class MailSettings(BaseSettings):
@@ -35,6 +36,13 @@ class MailboxInput(BaseModel):
     since: date
     poll_minutes: int = Field(ge=1, le=60)
     password: SecretStr | None = None
+
+    @model_validator(mode="after")
+    def check_provider(self) -> Self:
+        is_netease_address = self.address.rsplit("@", 1)[-1].lower() == "163.com"
+        if is_netease_address != (self.host == NETEASE_HOST):
+            raise ValueError("Use the 163 IMAP server with a personal @163.com address")
+        return self
 
     @field_validator("folder")
     @classmethod
