@@ -4,6 +4,20 @@ import { UserAddOutlined } from "@ant-design/icons";
 import { Modal } from "antd";
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { messageOf, relayRequest, roleLabels, type Role, type User } from "./relay-api";
+import { WorkbenchSelect } from "./workbench-select";
+
+const roleOptions = (["viewer", "admin"] as const).map((value) => ({ value, label: roleLabels[value] }));
+
+function RoleField({ initial, disabled }: { initial: Role; disabled: boolean }) {
+  const [role, setRole] = useState(initial);
+  return <>
+    <label>角色
+      <WorkbenchSelect label="角色" options={roleOptions} value={role}
+        onChange={setRole} disabled={disabled} />
+    </label>
+    <input type="hidden" name="role" value={role} />
+  </>;
+}
 
 export function UserManagement({ current }: { current: User }) {
   const [users, setUsers] = useState<User[]>();
@@ -152,7 +166,7 @@ export function UserManagement({ current }: { current: User }) {
         <section className="page-card mailbox-card" key={selected.id}>
           <div className="section-heading"><h2>管理 {selected.username}</h2><button type="button" className="button" disabled={busy} onClick={() => setSelectedId(undefined)}>关闭</button></div>
           <form className="account-form" onSubmit={(event) => void save(event, "access")}>
-            <label>角色<select name="role" defaultValue={selected.role}><option value="viewer">查询用户</option><option value="admin">管理员</option></select></label>
+            <RoleField initial={selected.role} disabled={busy} />
             <label className="checkbox-row"><input name="active" type="checkbox" defaultChecked={selected.active} /> 启用账号</label>
             <button type="submit" className="button primary-button" disabled={busy}>保存权限</button>
           </form>
@@ -173,10 +187,7 @@ export function UserManagement({ current }: { current: User }) {
           <label>用户名<input ref={usernameInput} name="username" required minLength={3} maxLength={64}
             autoComplete="off" aria-describedby={usernameHint} disabled={busy} /></label>
           <p id={usernameHint} className="field-hint">以英文字母开头，可用小写字母、数字、下划线、点或短横线。</p>
-          <label>角色<select name="role" defaultValue="viewer" disabled={busy}>
-            <option value="viewer">查询用户</option>
-            <option value="admin">管理员</option>
-          </select></label>
+          <RoleField initial="viewer" disabled={busy} />
           <label>临时密码<input name="password" type="password" minLength={8} maxLength={128}
             autoComplete="new-password" aria-describedby={passwordHint} required disabled={busy} /></label>
           <p id={passwordHint} className="field-hint">至少 8 个字符，用户首次登录时需修改。</p>

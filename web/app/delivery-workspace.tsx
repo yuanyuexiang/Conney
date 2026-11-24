@@ -4,18 +4,24 @@ import {
   ArrowLeftOutlined, DownloadOutlined, FileExcelOutlined, ReloadOutlined,
   UnorderedListOutlined,
 } from "@ant-design/icons";
-import { Drawer } from "antd";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { Drawer, type RefSelectProps } from "antd";
+import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   addQuantities, entryLabels, mappingLabels, needsReview, shortDate,
-  type DeliveryDraft, type Entry, type Material, type Summary,
+  type DeliveryDraft, type Entry, type Material, type Shipment, type Summary,
 } from "./delivery-api";
 import { MappingDialog } from "./material-mapping";
 import { messageOf, relayRequest, RelayRequestError } from "./relay-api";
+import { WorkbenchSelect } from "./workbench-select";
 
 type GridMode = "demand" | "shipment";
 type Mode = GridMode | "review";
 type Selection = { materialId: number; entryIds: number[]; label: string };
+
+const shipmentModes: { value: Shipment["mode"]; label: string }[] = [
+  { value: "air", label: "空运 · 14 天" },
+  { value: "sea", label: "海运 · 84 天" },
+];
 
 function periodKey(entry: Entry, mode: GridMode) {
   if (mode === "demand") return entry.period;
@@ -121,12 +127,22 @@ function ShipmentForm({ entry, busy, error, onSave, onClose }: {
   onSave: (shipment: object | null) => void;
   onClose: () => void;
 }) {
+  const [mode, setMode] = useState(entry.shipment?.mode);
+  const [missingMode, setMissingMode] = useState(false);
+  const modeRef = useRef<RefSelectProps>(null);
+  const modeErrorId = useId();
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!mode) {
+      setMissingMode(true);
+      modeRef.current?.focus();
+      return;
+    }
     const form = new FormData(event.currentTarget);
     onSave({
       ship_date: form.get("ship_date"),
-      mode: form.get("mode"),
+      mode,
       manual_eta: form.get("manual_eta") || null,
       source_note: form.get("source_note"),
     });
@@ -134,9 +150,16 @@ function ShipmentForm({ entry, busy, error, onSave, onClose }: {
   return (
     <form className="account-form shipment-form" onSubmit={submit}>
       <label>发货日期<input type="date" name="ship_date" required defaultValue={entry.shipment?.ship_date} /></label>
-      <label>运输方式<select name="mode" defaultValue={entry.shipment?.mode ?? ""} required>
-        <option value="" disabled>请选择</option><option value="air">空运 · 14 天</option><option value="sea">海运 · 84 天</option>
-      </select></label>
+      <label>运输方式
+        <WorkbenchSelect ref={modeRef} label="运输方式" aria-required="true"
+          aria-invalid={missingMode} aria-describedby={missingMode ? modeErrorId : undefined}
+          status={missingMode ? "error" : undefined} disabled={busy} value={mode}
+          options={shipmentModes} placeholder="请选择运输方式" onChange={(value) => {
+            setMode(value);
+            setMissingMode(false);
+          }} />
+        {missingMode && <span className="shipment-field-error" id={modeErrorId} role="alert">请选择运输方式。</span>}
+      </label>
       <label>人工 ETA（可选）<input type="date" name="manual_eta" defaultValue={entry.shipment?.manual_eta ?? ""} /></label>
       <label>发货依据<input name="source_note" maxLength={240} defaultValue={entry.shipment?.source_note}
         placeholder="例如运输计划编号或确认邮件" required /></label>
@@ -358,7 +381,7 @@ export function DeliveryWorkspace({ admin, draftId, onSelect, review = false, on
   onQueue: () => void;
 }) {
   const [rows, setRows] = useState<Summary[]>();
-  const [status, setStatus] = useState("all");
+  const [status, setStatus] = useState<"all" | "review">("all");
   const [search, setSearch] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [error, setError] = useState("");
@@ -412,11 +435,9 @@ export function DeliveryWorkspace({ admin, draftId, onSelect, review = false, on
             <h2>交付批次</h2>
             <input value={search} aria-label="搜索交付批次" placeholder="搜索报文或附件" maxLength={120}
               onChange={(event) => setSearch(event.target.value)} />
-            {!review && <select aria-label="按核对状态筛选" value={status} onChange={(event) => {
-              setRows(undefined); setStatus(event.target.value);
-            }}>
-              <option value="all">全部状态</option><option value="review">待核对</option>
-            </select>}
+            {!review && <WorkbenchSelect label="按核对状态筛选" filter active={status === "review"} value={status}
+              options={[{ value: "all", label: "全部状态" }, { value: "review", label: "待核对" }]}
+              onChange={(value) => { setRows(undefined); setStatus(value); }} />}
           </div>
           {error && <p className="notice failed" role="alert">{error}</p>}
           {rows?.map((row) => {

@@ -144,7 +144,7 @@ tr:last-child td { border-bottom: 0; }
   padding: 0;
 }
 .mailbox-card label { display: flex; flex-direction: column; min-width: 0; gap: .35rem; font-size: .875rem; color: var(--ink); }
-.mailbox-card input, .mailbox-card select {
+.mailbox-card label > input {
   min-width: 0;
   width: 100%;
   min-height: 39px;
@@ -155,13 +155,7 @@ tr:last-child td { border-bottom: 0; }
   color: var(--ink);
   font: inherit;
 }
-.mailbox-card input[readonly] { background: var(--surface); color: var(--secondary); }
-.mailbox-card select {
-  appearance: none;
-  padding-right: 1.65rem;
-  background: linear-gradient(45deg, transparent 50%, var(--muted) 50%) right 15px center / 5px 5px no-repeat,
-              linear-gradient(135deg, var(--muted) 50%, transparent 50%) right 10px center / 5px 5px no-repeat #fff;
-}
+.mailbox-card label > input[readonly] { background: var(--surface); color: var(--secondary); }
 .wide-field { grid-column: 1 / -1; }
 .field-hint { color: var(--muted); font-size: .8125rem; line-height: 1.55; }
 .mailbox-notice { margin: .8rem 0 0; }

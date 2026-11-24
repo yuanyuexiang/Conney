@@ -3,6 +3,7 @@
 import { CheckCircleOutlined, MailOutlined, ReloadOutlined } from "@ant-design/icons";
 import { type FormEvent, useEffect, useState } from "react";
 import { messageOf, relayRequest } from "./relay-api";
+import { WorkbenchSelect } from "./workbench-select";
 
 type Mailbox = {
   address: string;
@@ -31,6 +32,12 @@ const initialMailbox: Mailbox = {
   last_sync_result: null,
   last_sync_count: null,
 };
+
+const imapServers: { value: Mailbox["host"]; label: string }[] = [
+  { value: "imap.263.net", label: "263 企业邮箱 · imap.263.net" },
+  { value: "imapw.263.net", label: "263 企业邮箱 · imapw.263.net" },
+  { value: "imap.163.com", label: "网易 163 · imap.163.com" },
+];
 
 const connectionMessages: Record<string, string> = {
   ok: "连接成功，已只读打开指定文件夹。",
@@ -225,11 +232,8 @@ export function MailboxSettings({ onChanged }: { onChanged: () => void }) {
               onChange={(event) => { setPassword(event.target.value); setDirty(true); setMessage(null); }} />
           </label>
           <label>IMAP 服务器
-            <select value={mailbox.host} onChange={(event) => edit("host", event.target.value as Mailbox["host"])}>
-              <option value="imap.263.net">263 企业邮箱 · imap.263.net</option>
-              <option value="imapw.263.net">263 企业邮箱 · imapw.263.net</option>
-              <option value="imap.163.com">网易 163 · imap.163.com</option>
-            </select>
+            <WorkbenchSelect label="IMAP 服务器" value={mailbox.host} options={imapServers}
+              disabled={!loaded || pending !== null} onChange={(host) => edit("host", host)} />
           </label>
           <label>连接方式<input type="text" value="TLS / 993" readOnly /></label>
           <label>采集文件夹<input type="text" value={mailbox.folder} required maxLength={128} onChange={(event) => edit("folder", event.target.value)} /></label>

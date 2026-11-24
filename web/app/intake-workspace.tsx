@@ -7,6 +7,7 @@ import {
 } from "@ant-design/icons";
 import { useEffect, useState } from "react";
 import { messageOf, relayRequest } from "./relay-api";
+import { WorkbenchSelect } from "./workbench-select";
 import { chinaTime, formatSyncTime, type IntakeCounts, type MailboxStatus, type SyncView } from "./workbench-status";
 
 type MailState = "failed" | "review" | "queued" | "complete" | "archived";
@@ -90,14 +91,16 @@ const queueFilters = [
   { id: "queued", label: "解析队列", icon: ClockCircleOutlined },
 ] as const;
 
-const archiveFilters = [
-  { id: "all", label: "全部状态" },
-  { id: "complete", label: "解析完成" },
-  { id: "archived", label: "仅归档" },
-  { id: "failed", label: "有异常" },
-  { id: "review", label: "待核对" },
-  { id: "queued", label: "排队中" },
-] as const;
+type ArchiveFilterOption = { value: Exclude<MailFilter, "actionable">; label: string };
+
+const archiveFilters: ArchiveFilterOption[] = [
+  { value: "all", label: "全部状态" },
+  { value: "complete", label: statusLabels.complete },
+  { value: "archived", label: "仅归档" },
+  { value: "failed", label: statusLabels.failed },
+  { value: "review", label: statusLabels.review },
+  { value: "queued", label: "排队中" },
+];
 
 const MAIL_PAGE_SIZE = 30;
 const QUANTITY_PAGE_SIZE = 100;
@@ -604,12 +607,13 @@ export function IntakeWorkspace({ view, counts, mailbox, sync, revision, refresh
           <section className="archive-surface" aria-label="归档邮件查询">
             <div className="archive-toolbar">
               <MailSearch value={search} onChange={updateSearch} />
-              <label className="archive-filter">
-                <span>处理状态</span>
-                <select value={filter} onChange={(event) => chooseFilter(event.target.value as MailFilter)}>
-                  {archiveFilters.map(({ id, label }) => <option key={id} value={id}>{label}</option>)}
-                </select>
-              </label>
+              <WorkbenchSelect<MailFilter> label="处理状态" filter active={filter !== "all"} value={filter}
+                popupMatchSelectWidth={188} options={archiveFilters} onChange={chooseFilter}
+                optionRender={({ data }) => <span className="archive-filter-option">
+                  <span className={`archive-filter-dot ${data.value}`} aria-hidden="true" />
+                  {data.label}
+                </span>}
+              />
               <span className="archive-count" role="status">{countLabel}</span>
             </div>
             <ArchiveTable messages={rows} emptyState={tableMessage} onSelect={setSelection} />
