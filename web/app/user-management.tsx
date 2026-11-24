@@ -12,8 +12,11 @@ export function UserManagement({ current }: { current: User }) {
   const [status, setStatus] = useState<{ error: boolean; text: string }>();
   const [adding, setAdding] = useState(false);
   const [createError, setCreateError] = useState("");
+  const [removing, setRemoving] = useState<User>();
+  const [removeError, setRemoveError] = useState("");
   const addButton = useRef<HTMLButtonElement>(null);
   const usernameInput = useRef<HTMLInputElement>(null);
+  const deleteTrigger = useRef<HTMLButtonElement>(null);
   const usernameHint = useId();
   const passwordHint = useId();
   const selected = users?.find((user) => user.id === selectedId);
@@ -87,6 +90,23 @@ export function UserManagement({ current }: { current: User }) {
     }
   }
 
+  async function removeUser() {
+    if (busy || !removing) return;
+    setBusy(true);
+    setRemoveError("");
+    try {
+      await relayRequest(`/users/${removing.id}`, { method: "DELETE" });
+      setUsers((previous) => previous?.filter((user) => user.id !== removing.id));
+      setSelectedId((previous) => previous === removing.id ? undefined : previous);
+      setStatus({ error: false, text: `已删除账号「${removing.username}」。` });
+      setRemoving(undefined);
+    } catch (reason) {
+      setRemoveError(messageOf(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="user-management">
       {status && <p role={status.error ? "alert" : "status"} className={`notice ${status.error ? "failed" : ""}`}>{status.text}</p>}
@@ -110,7 +130,19 @@ export function UserManagement({ current }: { current: User }) {
                 <td>{user.username}{user.id === current.id && "（当前账号）"}</td>
                 <td>{roleLabels[user.role]}</td>
                 <td>{user.active ? user.must_change_password ? "待修改密码" : "已启用" : "已停用"}</td>
-                <td>{user.id !== current.id && <button type="button" className="text-button" onClick={() => { setSelectedId(user.id); setStatus(undefined); }} disabled={busy}>管理</button>}</td>
+                <td>{user.id !== current.id && <div className="user-row-actions">
+                  <button type="button" className="text-button" onClick={() => {
+                    setSelectedId(user.id);
+                    setStatus(undefined);
+                  }} disabled={busy}>管理</button>
+                  <button type="button" className="text-button delete-user-button"
+                    aria-label={`删除用户 ${user.username}`} aria-haspopup="dialog" onClick={(event) => {
+                      deleteTrigger.current = event.currentTarget;
+                      setRemoveError("");
+                      setStatus(undefined);
+                      setRemoving(user);
+                    }} disabled={busy}>删除</button>
+                </div>}</td>
               </tr>
             ))}</tbody></table>
         </div>
@@ -156,6 +188,19 @@ export function UserManagement({ current }: { current: User }) {
             </button>
           </div>
         </form>
+      </Modal>
+      <Modal title="删除用户" open={removing !== undefined} width={440} centered
+        okText="确认删除" cancelText="取消" okButtonProps={{ danger: true }}
+        cancelButtonProps={{ disabled: busy, autoFocus: true }}
+        confirmLoading={busy} keyboard={!busy} closable={busy ? false : { "aria-label": "关闭删除确认" }}
+        mask={{ closable: false }} onOk={() => void removeUser()}
+        focusable={{ trap: true, focusTriggerAfterClose: false }}
+        onCancel={() => { if (!busy) setRemoving(undefined); }}
+        afterClose={() => {
+          (deleteTrigger.current?.isConnected ? deleteTrigger.current : addButton.current)?.focus();
+        }}>
+        <p>删除账号「{removing?.username}」后，该用户将从列表移除，现有会话立即失效。历史交付记录会保留。</p>
+        {removeError && <p className="notice failed" role="alert">{removeError}</p>}
       </Modal>
     </div>
   );

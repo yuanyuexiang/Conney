@@ -82,3 +82,49 @@ def test_access_lifecycle(signed_in: Callable[[TestClient, Role], User]) -> None
         )
         assert admin.post("/api/v1/auth/logout", headers=BROWSER).status_code == 204
         assert admin.get("/api/v1/auth/me").status_code == 401
+
+
+@pytest.mark.skipif(os.environ.get("RELAY_TEST_DB") != "1", reason="Requires test PostgreSQL")
+def test_delete_user_revokes_sessions_and_allows_reusing_the_name(
+    signed_in: Callable[[TestClient, Role], User],
+) -> None:
+    with TestClient(app) as admin, TestClient(app) as viewer, TestClient(app) as anonymous:
+        actor = signed_in(admin, "admin")
+        account = signed_in(viewer, "viewer")
+        path = f"/api/v1/users/{account.id}"
+
+        assert anonymous.delete(path, headers=BROWSER).status_code == 401
+        assert viewer.delete(path, headers=BROWSER).status_code == 403
+        assert admin.delete(path).status_code == 403
+        self_delete = admin.delete(f"/api/v1/users/{actor.id}", headers=BROWSER)
+        assert self_delete.status_code == 409
+        assert self_delete.json()["detail"] == "cannot_delete_own_account"
+
+        assert admin.delete(path, headers=BROWSER).status_code == 204
+        assert account.id not in {user["id"] for user in admin.get("/api/v1/users").json()}
+        assert viewer.get("/api/v1/auth/me").status_code == 401
+        assert admin.delete(path, headers=BROWSER).status_code == 404
+        assert (
+            admin.patch(path, headers=BROWSER, json={"role": "viewer", "active": True}).status_code
+            == 404
+        )
+        replacement_password = "new-account-password"
+        assert (
+            admin.post(
+                path + "/password", headers=BROWSER, json={"password": replacement_password}
+            ).status_code
+            == 404
+        )
+
+        values = {
+            "username": account.username,
+            "role": "viewer",
+            "password": replacement_password,
+        }
+        replacement = admin.post("/api/v1/users", headers=BROWSER, json=values)
+        assert replacement.status_code == 201 and replacement.json()["id"] != account.id
+        assert admin.post("/api/v1/users", headers=BROWSER, json=values).status_code == 409
+        assert viewer.get("/api/v1/auth/me").status_code == 401
+        credentials = {"username": account.username, "password": replacement_password}
+        signed = viewer.post("/api/v1/auth/login", headers=BROWSER, json=credentials)
+        assert signed.status_code == 200 and signed.json()["id"] == replacement.json()["id"]

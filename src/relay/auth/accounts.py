@@ -68,7 +68,10 @@ def _new_session(connection: Connection, user_id: int) -> str:
 def login(username: str, password: str) -> tuple[User, str] | None:
     with get_engine().connect() as connection:
         row = connection.execute(
-            text("SELECT id, password_hash FROM relay_users WHERE username = :username"),
+            text(
+                "SELECT id, password_hash FROM relay_users "
+                "WHERE username = :username AND deleted_at IS NULL"
+            ),
             {"username": username.strip().lower()},
         ).one_or_none()
 
@@ -154,7 +157,8 @@ def create_user(values: NewUser, *, bootstrap: bool = False) -> User | None:
             connection.execute(
                 text(
                     "INSERT INTO relay_users (username, role, password_hash) "
-                    "VALUES (:username, :role, :password) ON CONFLICT (username) DO NOTHING "
+                    "VALUES (:username, :role, :password) "
+                    "ON CONFLICT (username) WHERE deleted_at IS NULL DO NOTHING "
                     f"RETURNING {USER_COLUMNS}"
                 ),
                 {"username": values.username, "role": values.role, "password": password_hash},
@@ -168,27 +172,32 @@ def create_user(values: NewUser, *, bootstrap: bool = False) -> User | None:
 def list_users() -> list[User]:
     with get_engine().connect() as connection:
         rows = connection.execute(
-            text(f"SELECT {USER_COLUMNS} FROM relay_users ORDER BY id")
+            text(f"SELECT {USER_COLUMNS} FROM relay_users WHERE deleted_at IS NULL ORDER BY id")
         ).mappings()
         return [User.model_validate(row) for row in rows]
+
+
+def _lock_admin_change(connection: Connection, actor_id: int) -> None:
+    # Check the actor under the same lock used for management of other admins.
+    connection.execute(text("LOCK TABLE relay_users IN SHARE ROW EXCLUSIVE MODE"))
+    authorized = connection.scalar(
+        text("SELECT id FROM relay_users WHERE id = :id AND active AND role = 'admin'"),
+        {"id": actor_id},
+    )
+    if authorized is None:
+        raise ValueError("permission_denied")
 
 
 def update_user(actor: User, user_id: int, changes: ChangeUser) -> User | None:
     if actor.id == user_id and (not changes.active or changes.role != actor.role):
         raise ValueError("cannot_change_own_access")
     with get_engine().begin() as connection:
-        # Serialize role/activation changes, and lock the actor against concurrent disablement.
-        connection.execute(text("LOCK TABLE relay_users IN SHARE ROW EXCLUSIVE MODE"))
-        authorized = connection.scalar(
-            text("SELECT id FROM relay_users WHERE id = :id AND active AND role = 'admin'"),
-            {"id": actor.id},
-        )
-        if authorized is None:
-            raise ValueError("permission_denied")
+        _lock_admin_change(connection, actor.id)
         row = (
             connection.execute(
                 text(
-                    "UPDATE relay_users SET role = :role, active = :active WHERE id = :id "
+                    "UPDATE relay_users SET role = :role, active = :active "
+                    "WHERE id = :id AND deleted_at IS NULL "
                     f"RETURNING {USER_COLUMNS}"
                 ),
                 {"id": user_id, **changes.model_dump()},
@@ -204,15 +213,34 @@ def update_user(actor: User, user_id: int, changes: ChangeUser) -> User | None:
     return None if row is None else User.model_validate(row)
 
 
+def delete_user(actor: User, user_id: int) -> bool:
+    if actor.id == user_id:
+        raise ValueError("cannot_delete_own_account")
+    with get_engine().begin() as connection:
+        _lock_admin_change(connection, actor.id)
+        deleted = connection.execute(
+            text(
+                "UPDATE relay_users SET deleted_at = now(), active = false, "
+                "password_hash = :retired_hash WHERE id = :id AND deleted_at IS NULL RETURNING id"
+            ),
+            {"id": user_id, "retired_hash": token_bytes(48)},
+        ).scalar_one_or_none()
+        if deleted is None:
+            return False
+        connection.execute(text("DELETE FROM relay_sessions WHERE user_id = :id"), {"id": user_id})
+        return True
+
+
 def reset_password(actor: User, user_id: int, replacement: str) -> bool:
     if actor.id == user_id:
         raise ValueError("use_own_password_change")
     password = _hash(replacement)
     with get_engine().begin() as connection:
+        _lock_admin_change(connection, actor.id)
         updated = connection.execute(
             text(
                 "UPDATE relay_users SET password_hash = :password, must_change_password = true "
-                "WHERE id = :id RETURNING id"
+                "WHERE id = :id AND deleted_at IS NULL RETURNING id"
             ),
             {"password": password, "id": user_id},
         ).scalar_one_or_none()

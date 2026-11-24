@@ -100,7 +100,7 @@ def test_delivery_draft_from_archive_to_generation(
     assert process_one(archive)
 
     with TestClient(app) as client, TestClient(app) as reader:
-        signed_in(client, "admin")
+        owner = signed_in(client, "admin")
         signed_in(reader, "viewer")
         attachments = client.get(f"/api/v1/intake/emails/{received.mail_id}").json()["attachments"]
         assert attachments[0]["template"] == "drx_delfor", attachments
@@ -190,3 +190,15 @@ def test_delivery_draft_from_archive_to_generation(
         assert any(
             row["id"] == draft["id"] for row in client.get("/api/v1/delivery?review=true").json()
         )
+        with TestClient(app) as manager:
+            signed_in(manager, "admin")
+            assert manager.delete(f"/api/v1/users/{owner.id}", headers=_BROWSER).status_code == 204
+        assert reader.get(draft_url).json() == sent.json()
+        with get_engine().connect() as connection:
+            assert (
+                connection.scalar(
+                    text("SELECT updated_by FROM delivery_drafts WHERE run_id = :id"),
+                    {"id": draft["id"]},
+                )
+                == owner.id
+            )

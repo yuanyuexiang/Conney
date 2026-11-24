@@ -20,6 +20,8 @@ const messages: Record<string, string> = {
   password_unchanged: "请设置与当前密码不同的新密码。",
   username_exists: "此用户名已存在。",
   cannot_change_own_access: "请使用其他管理员账号修改此账号的权限。",
+  cannot_delete_own_account: "当前登录账号不能删除。",
+  permission_denied: "管理员权限已变更，请重新登录。",
   user_not_found: "该用户不存在，请刷新后重试。",
   use_own_password_change: "请从右上角账号菜单选择「修改密码」。",
   mailbox_admin_unavailable: "邮箱加密密钥未配置，请联系部署管理员。",

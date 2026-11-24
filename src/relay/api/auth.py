@@ -133,6 +133,16 @@ def edit_user(user_id: int, values: ChangeUser, actor: AdminUser) -> User:
     return user
 
 
+@router.delete("/users/{user_id}", status_code=204, dependencies=_BROWSER)
+def remove_user(user_id: int, actor: AdminUser) -> None:
+    try:
+        deleted = accounts.delete_user(actor, user_id)
+    except ValueError as error:
+        raise HTTPException(409, detail=str(error)) from None
+    if not deleted:
+        raise HTTPException(404, detail="user_not_found")
+
+
 @router.post("/users/{user_id}/password", status_code=204, dependencies=_BROWSER)
 def reset_password(user_id: int, values: ResetPassword, actor: AdminUser) -> None:
     try:

@@ -3,7 +3,6 @@
 import {
   CloudServerOutlined,
   DatabaseOutlined,
-  ExperimentOutlined,
   InboxOutlined,
   FileExcelOutlined,
   LogoutOutlined,
@@ -12,7 +11,6 @@ import {
   TagsOutlined,
 } from "@ant-design/icons";
 import Image from "next/image";
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AccountLayout, PasswordForm, SignIn } from "./account-forms";
 import { AccountMenu } from "./account-menu";
@@ -227,9 +225,6 @@ function Workspace({ user, onUpdated, onLogout, leaving, logoutError }: {
                   {id === "queue" && actionable > 0 && <span className="nav-count">{actionable}</span>}
                 </button>
               ))}
-              {group.label === "工作台" && <Link className="nav-item demo-nav-link" href="/demo" prefetch={false}>
-                <ExperimentOutlined aria-hidden="true" /> 演示工作台
-              </Link>}
             </div>
           ))}
           <div className="sidebar-footer"><strong>Relay</strong><span>康尼新能源</span></div>

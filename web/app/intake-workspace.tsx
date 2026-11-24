@@ -9,8 +9,8 @@ import { useEffect, useState } from "react";
 import { messageOf, relayRequest } from "./relay-api";
 import { chinaTime, formatSyncTime, type IntakeCounts, type MailboxStatus, type SyncView } from "./workbench-status";
 
-export type MailState = "failed" | "review" | "queued" | "complete" | "archived";
-export type MailFilter = MailState | "all" | "actionable";
+type MailState = "failed" | "review" | "queued" | "complete" | "archived";
+type MailFilter = MailState | "all" | "actionable";
 type Mail = {
   id: number;
   sender: string;
@@ -31,10 +31,9 @@ type Attachment = {
   error_reason: string | null;
   error_location: string | null;
   review_location: string | null;
-  review_reason?: "quantity";
   template: string | null;
 };
-export type Quantity = {
+type Quantity = {
   id: number;
   material: string | null;
   quantity: string;
@@ -49,14 +48,8 @@ export type Quantity = {
   raw_interval_start: string | null;
   raw_interval_end: string | null;
 };
-export type Detail = { mail: Mail; attachments: Attachment[] };
+type Detail = { mail: Mail; attachments: Attachment[] };
 type ListParams = { state: MailFilter; query: string; limit: number; before?: number; signal?: AbortSignal };
-export type IntakeSource = {
-  list: (params: ListParams) => Promise<Mail[]>;
-  detail: (id: number, signal: AbortSignal) => Promise<Detail>;
-  quantities: (id: number, after: number, limit: number, signal: AbortSignal) => Promise<Quantity[]>;
-  fileUrl: (attachment: Attachment) => string;
-};
 type MailPage = { key: string; fetchedFor: string; rows: Mail[]; more: boolean };
 
 const errorLabels: Record<string, string> = {
@@ -80,7 +73,6 @@ const failureReasons: Record<string, string> = {
   "unexpected formula": "工作簿含有公式",
   "missing material number": "缺少物料编号",
   "Unrecognized schedule workbook title": "无法识别报文模板",
-  "missing quantity column": "样例缺少原始数量列",
 };
 
 const templateLabels: Record<string, string> = {
@@ -110,17 +102,16 @@ const archiveFilters = [
 const MAIL_PAGE_SIZE = 30;
 const QUANTITY_PAGE_SIZE = 100;
 
-const liveIntake: IntakeSource = {
-  list({ state, query, limit, before, signal }) {
+const intake = {
+  list({ state, query, limit, before, signal }: ListParams) {
     const params = new URLSearchParams({ state, q: query, limit: String(limit) });
     if (before !== undefined) params.set("before", String(before));
     return relayRequest<Mail[]>(`/intake/emails?${params}`, { signal });
   },
-  detail: (id, signal) => relayRequest<Detail>(`/intake/emails/${id}`, { signal }),
-  quantities: (id, after, limit, signal) => relayRequest<Quantity[]>(
+  detail: (id: number, signal: AbortSignal) => relayRequest<Detail>(`/intake/emails/${id}`, { signal }),
+  quantities: (id: number, after: number, limit: number, signal: AbortSignal) => relayRequest<Quantity[]>(
     `/intake/attachments/${id}/quantities?after=${after}&limit=${limit}`, { signal },
   ),
-  fileUrl: ({ id }) => `/api/v1/intake/attachments/${id}/file`,
 };
 
 function Status({ state, children }: { state: MailState; children?: string }) {
@@ -180,7 +171,7 @@ function QuantityTable({ quantities }: { quantities: Quantity[] }) {
   );
 }
 
-function AttachmentQuantities({ attachmentId, source }: { attachmentId: number; source: IntakeSource }) {
+function AttachmentQuantities({ attachmentId }: { attachmentId: number }) {
   const [quantities, setQuantities] = useState<Quantity[]>([]);
   const [after, setAfter] = useState(0);
   const [more, setMore] = useState(false);
@@ -190,7 +181,7 @@ function AttachmentQuantities({ attachmentId, source }: { attachmentId: number; 
 
   useEffect(() => {
     const controller = new AbortController();
-    source.quantities(attachmentId, after, QUANTITY_PAGE_SIZE + 1, controller.signal).then((rows) => {
+    intake.quantities(attachmentId, after, QUANTITY_PAGE_SIZE + 1, controller.signal).then((rows) => {
       if (controller.signal.aborted) return;
       setQuantities((previous) => [...previous, ...rows.slice(0, QUANTITY_PAGE_SIZE)]);
       setMore(rows.length > QUANTITY_PAGE_SIZE);
@@ -200,7 +191,7 @@ function AttachmentQuantities({ attachmentId, source }: { attachmentId: number; 
       if (!controller.signal.aborted) setLoading(false);
     });
     return () => controller.abort();
-  }, [attachmentId, after, revision, source]);
+  }, [attachmentId, after, revision]);
 
   return (
     <div className="attachment-quantities">
@@ -224,13 +215,8 @@ function AttachmentQuantities({ attachmentId, source }: { attachmentId: number; 
 function Diagnosis({ attachment }: { attachment: Attachment }) {
   if (attachment.review_location) return (
     <div className="diagnosis review">
-      {attachment.review_reason === "quantity" ? <>
-        <strong>数量口径待核对</strong>
-        <p>请核对该数量在交付计划中的含义。</p>
-      </> : <>
-        <strong>交付日期原值待核对</strong>
-        <p>源文件中的 <code>000000</code> 已保留，请按客户规则核对。</p>
-      </>}
+      <strong>交付日期原值待核对</strong>
+      <p>源文件中的 <code>000000</code> 已保留，请按客户规则核对。</p>
       <details>
         <summary>查看来源</summary>
         <dl><dt>Excel 坐标</dt><dd><code>{attachment.review_location}</code></dd></dl>
@@ -253,8 +239,8 @@ function Diagnosis({ attachment }: { attachment: Attachment }) {
   );
 }
 
-function MailDetail({ mail, refreshKey, onBack, archive, source, onDraftOpened }: {
-  mail: Mail; refreshKey: string; onBack: () => void; archive: boolean; source: IntakeSource;
+function MailDetail({ mail, refreshKey, onBack, archive, onDraftOpened }: {
+  mail: Mail; refreshKey: string; onBack: () => void; archive: boolean;
   onDraftOpened?: (id: number) => void;
 }) {
   const [detail, setDetail] = useState<Detail>();
@@ -266,7 +252,7 @@ function MailDetail({ mail, refreshKey, onBack, archive, source, onDraftOpened }
 
   useEffect(() => {
     const controller = new AbortController();
-    source.detail(mail.id, controller.signal)
+    intake.detail(mail.id, controller.signal)
       .then((values) => {
         if (controller.signal.aborted) return;
         setDetail(values);
@@ -274,12 +260,12 @@ function MailDetail({ mail, refreshKey, onBack, archive, source, onDraftOpened }
       })
       .catch((reason) => { if (!controller.signal.aborted) setError(messageOf(reason)); });
     return () => controller.abort();
-  }, [mail.id, refreshKey, source]);
+  }, [mail.id, refreshKey]);
 
   async function download(attachment: Attachment) {
     setDownloadError("");
     try {
-      const response = await fetch(source.fileUrl(attachment), { cache: "no-store" });
+      const response = await fetch(`/api/v1/intake/attachments/${attachment.id}/file`, { cache: "no-store" });
       if (response.status === 401) window.dispatchEvent(new Event("relay-session-expired"));
       if (!response.ok) throw new Error("原始附件暂不可下载，请检查归档状态。");
       const url = URL.createObjectURL(await response.blob());
@@ -354,7 +340,7 @@ function MailDetail({ mail, refreshKey, onBack, archive, source, onDraftOpened }
                 </button>
               </div>
             )}
-            {selectedAttachment === attachment.id && <AttachmentQuantities attachmentId={attachment.id} source={source} />}
+            {selectedAttachment === attachment.id && <AttachmentQuantities attachmentId={attachment.id} />}
           </section>
         ))}
         {!detail && !error && <p className="empty" role="status">正在读取邮件详情…</p>}
@@ -483,7 +469,7 @@ function MailSearch({ value, onChange }: { value: string; onChange: (value: stri
 }
 
 export function IntakeWorkspace({ view, counts, mailbox, sync, revision, refresh, onConfigure, onViewArchive,
-  source = liveIntake, onDraftOpened, onReviewDelivery, initialMailId }: {
+  onDraftOpened, onReviewDelivery, initialMailId }: {
   view: "queue" | "archive";
   counts: IntakeCounts | undefined;
   mailbox: MailboxStatus | null | undefined;
@@ -492,7 +478,6 @@ export function IntakeWorkspace({ view, counts, mailbox, sync, revision, refresh
   refresh: () => void;
   onConfigure?: () => void;
   onViewArchive: () => void;
-  source?: IntakeSource;
   onDraftOpened?: (id: number) => void;
   onReviewDelivery?: () => void;
   initialMailId?: number;
@@ -515,11 +500,11 @@ export function IntakeWorkspace({ view, counts, mailbox, sync, revision, refresh
   useEffect(() => {
     if (!archive || initialMailId === undefined) return;
     const controller = new AbortController();
-    source.detail(initialMailId, controller.signal)
+    intake.detail(initialMailId, controller.signal)
       .then((detail) => { if (!controller.signal.aborted) setSelection(detail.mail); })
       .catch((reason) => { if (!controller.signal.aborted) setLinkedMailError(messageOf(reason)); });
     return () => controller.abort();
-  }, [archive, initialMailId, source]);
+  }, [archive, initialMailId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setQuery(search.trim()), 260);
@@ -528,7 +513,7 @@ export function IntakeWorkspace({ view, counts, mailbox, sync, revision, refresh
 
   useEffect(() => {
     const controller = new AbortController();
-    source.list({ state: filter, query, limit: MAIL_PAGE_SIZE + 1, signal: controller.signal })
+    intake.list({ state: filter, query, limit: MAIL_PAGE_SIZE + 1, signal: controller.signal })
       .then((rows) => {
         if (controller.signal.aborted) return;
         setPage({ key: listKey, fetchedFor: requestKey, rows: rows.slice(0, MAIL_PAGE_SIZE), more: rows.length > MAIL_PAGE_SIZE });
@@ -539,7 +524,7 @@ export function IntakeWorkspace({ view, counts, mailbox, sync, revision, refresh
         if (!controller.signal.aborted) setListError({ key: requestKey, message: messageOf(reason) });
       });
     return () => controller.abort();
-  }, [filter, query, listKey, requestKey, source]);
+  }, [filter, query, listKey, requestKey]);
 
   const current = page?.key === listKey ? page : undefined;
   const error = listError?.key === requestKey ? listError.message : "";
@@ -565,7 +550,7 @@ export function IntakeWorkspace({ view, counts, mailbox, sync, revision, refresh
     setLoadingMore(true);
     setMoreError("");
     try {
-      const more = await source.list({
+      const more = await intake.list({
         state: filter, query, limit: MAIL_PAGE_SIZE + 1, before: current.rows[current.rows.length - 1].id,
       });
       setPage((previous) => previous === current ? {
@@ -612,7 +597,7 @@ export function IntakeWorkspace({ view, counts, mailbox, sync, revision, refresh
             <ArrowLeftOutlined aria-hidden="true" /> 返回档案
           </button>
           <div className="archive-detail">
-            <MailDetail key={selected.id} mail={selected} refreshKey={refreshKey} archive source={source}
+            <MailDetail key={selected.id} mail={selected} refreshKey={refreshKey} archive
               onBack={() => setSelection(undefined)} onDraftOpened={onDraftOpened} />
           </div>
         </> : (
@@ -697,7 +682,7 @@ export function IntakeWorkspace({ view, counts, mailbox, sync, revision, refresh
                   mailbox={mailbox} onViewArchive={onViewArchive} />}
               </div>
             </aside>
-            {selected && <MailDetail key={selected.id} mail={selected} refreshKey={refreshKey} archive={false} source={source}
+            {selected && <MailDetail key={selected.id} mail={selected} refreshKey={refreshKey} archive={false}
               onBack={() => setSelection(undefined)} onDraftOpened={onDraftOpened} />}
           </div>
         </>
