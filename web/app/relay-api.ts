@@ -31,6 +31,15 @@ const messages: Record<string, string> = {
   mailbox_config_changed: "邮箱配置已修改，请刷新后重新测试。",
   mailbox_test_required: "请通过连接测试后再启用采集。",
   operations_unavailable: "暂时无法读取运行监测数据。",
+  invalid_delivery_fields: "请检查料号、订单、数量或发货日期。人工 ETA 须晚于或等于发货日。",
+  invalid_request_origin: "请求已失效，请刷新页面后重试。",
+  mapping_scope_exists: "同一客户、料号和匹配范围已有映射，请编辑已有记录。",
+  mapping_changed: "此映射已被更新，请关闭对话框并刷新列表后重试。",
+  draft_not_found: "该交付草稿不存在。",
+  draft_changed: "草稿已更新，请核对当前版本后重试。",
+  delivery_source_unavailable: "此附件尚未完成德科报文解析。",
+  delivery_entry_not_found: "该数量记录不存在，请重新打开草稿。",
+  delivery_entry_requires_review: "请先确认物料匹配、数量代码和交货日期。",
 };
 
 export class RelayRequestError extends Error {

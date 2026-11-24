@@ -7,6 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from relay.api.auth import router as auth_router
+from relay.api.delivery import router as delivery_router
 from relay.api.intake import router as intake_router
 from relay.api.mailbox import router as mailbox_router
 from relay.api.operations import router as operations_router
@@ -18,6 +19,7 @@ app = FastAPI(title="Relay", version="0.1.0", docs_url=None, redoc_url=None, ope
 app.include_router(auth_router)
 app.include_router(mailbox_router)
 app.include_router(intake_router)
+app.include_router(delivery_router)
 app.include_router(operations_router)
 
 
@@ -27,6 +29,8 @@ async def handle_validation_error(request: Request, error: RequestValidationErro
         return JSONResponse({"detail": "mailbox_invalid_fields"}, status_code=422)
     if request.url.path.startswith(("/api/v1/auth", "/api/v1/users")):
         return JSONResponse({"detail": "invalid_user_fields"}, status_code=422)
+    if request.url.path.startswith(("/api/v1/material-mappings", "/api/v1/delivery")):
+        return JSONResponse({"detail": "invalid_delivery_fields"}, status_code=422)
     return await request_validation_exception_handler(request, error)
 
 

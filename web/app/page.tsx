@@ -3,16 +3,22 @@
 import {
   CloudServerOutlined,
   DatabaseOutlined,
+  ExperimentOutlined,
   InboxOutlined,
+  FileExcelOutlined,
   LogoutOutlined,
   MailOutlined,
   TeamOutlined,
+  TagsOutlined,
 } from "@ant-design/icons";
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AccountLayout, PasswordForm, SignIn } from "./account-forms";
 import { AccountMenu } from "./account-menu";
 import { IntakeWorkspace } from "./intake-workspace";
+import { DeliveryWorkspace } from "./delivery-workspace";
+import { MaterialMappingPage } from "./material-mapping";
 import { MailboxSettings } from "./mailbox-settings";
 import { describeSync, formatSyncTime, type IntakeCounts, type MailboxStatus } from "./workbench-status";
 import { messageOf, relayRequest, RelayRequestError, type User } from "./relay-api";
@@ -23,8 +29,10 @@ const navigation = [
   { label: "工作台", items: [
     { id: "queue", label: "待处理", icon: InboxOutlined, adminOnly: false },
     { id: "archive", label: "收件档案", icon: DatabaseOutlined, adminOnly: false },
+    { id: "delivery", label: "交付计划", icon: FileExcelOutlined, adminOnly: false },
   ] },
   { label: "管理", items: [
+    { id: "mappings", label: "物料匹配", icon: TagsOutlined, adminOnly: true },
     { id: "mailbox", label: "邮箱配置", icon: MailOutlined, adminOnly: true },
     { id: "users", label: "用户管理", icon: TeamOutlined, adminOnly: true },
     { id: "system", label: "系统状态", icon: CloudServerOutlined, adminOnly: false },
@@ -115,6 +123,9 @@ function Workspace({ user, onUpdated, onLogout, leaving, logoutError }: {
   logoutError: string;
 }) {
   const [section, setSection] = useState<Section>("queue");
+  const [draftId, setDraftId] = useState<number>();
+  const [archiveMailId, setArchiveMailId] = useState<number>();
+  const [deliveryReview, setDeliveryReview] = useState(false);
   const [mailbox, setMailbox] = useState<MailboxStatus | null>();
   const [statusError, setStatusError] = useState(false);
   const [counts, setCounts] = useState<IntakeCounts>();
@@ -179,6 +190,12 @@ function Workspace({ user, onUpdated, onLogout, leaving, logoutError }: {
     setRevision((value) => value + 1);
   }
 
+  function navigate(id: Section) {
+    setArchiveMailId(undefined);
+    setDeliveryReview(false);
+    setSection(id);
+  }
+
   const admin = user.role === "admin";
   const allowed = navigation.flatMap((group) => [...group.items]).filter((item) => admin || !item.adminOnly);
   const active = allowed.find((item) => item.id === section) ?? allowed[0];
@@ -205,28 +222,39 @@ function Workspace({ user, onUpdated, onLogout, leaving, logoutError }: {
               <span className="sidebar-label">{group.label}</span>
               {group.items.filter((item) => admin || !item.adminOnly).map(({ id, label, icon: Icon }) => (
                 <button className={`nav-item ${active.id === id ? "active" : ""}`} type="button"
-                  aria-current={active.id === id ? "page" : undefined} key={id} onClick={() => setSection(id)}>
+                  aria-current={active.id === id ? "page" : undefined} key={id} onClick={() => navigate(id)}>
                   <Icon aria-hidden="true" />{label}
                   {id === "queue" && actionable > 0 && <span className="nav-count">{actionable}</span>}
                 </button>
               ))}
+              {group.label === "工作台" && <Link className="nav-item demo-nav-link" href="/demo" prefetch={false}>
+                <ExperimentOutlined aria-hidden="true" /> 演示工作台
+              </Link>}
             </div>
           ))}
           <div className="sidebar-footer"><strong>Relay</strong><span>康尼新能源</span></div>
         </nav>
 
-        {active.id === "queue" || active.id === "archive" ? (
+        {active.id === "delivery" || (active.id === "queue" && deliveryReview) ? (
+          <DeliveryWorkspace key={active.id} admin={admin} draftId={draftId} onSelect={setDraftId}
+            review={deliveryReview} onQueue={() => setDeliveryReview(false)}
+            onArchive={(id) => { navigate("archive"); setArchiveMailId(id); }} />
+        ) : active.id === "queue" || active.id === "archive" ? (
           <IntakeWorkspace key={active.id} view={active.id} counts={counts} sync={sync}
-            mailbox={mailbox} revision={revision} refresh={refresh} onViewArchive={() => setSection("archive")}
-            onConfigure={admin ? () => setSection("mailbox") : undefined} />
+            mailbox={mailbox} revision={revision} refresh={refresh} onViewArchive={() => navigate("archive")}
+            initialMailId={archiveMailId}
+            onReviewDelivery={() => { setDraftId(undefined); setDeliveryReview(true); }}
+            onDraftOpened={admin ? (id) => { setDraftId(id); navigate("delivery"); } : undefined}
+            onConfigure={admin ? () => navigate("mailbox") : undefined} />
         ) : active.id === "system" ? (
-          <SystemStatus onConfigure={admin ? () => setSection("mailbox") : undefined}
-            onViewQueue={() => setSection("queue")} />
+          <SystemStatus onConfigure={admin ? () => navigate("mailbox") : undefined}
+            onViewQueue={() => navigate("queue")} />
         ) : (
           <main className="full-page">
             <h1>{active.label}</h1>
             {active.id === "mailbox" && <MailboxSettings onChanged={refresh} />}
             {active.id === "users" && <UserManagement current={user} />}
+            {active.id === "mappings" && <MaterialMappingPage />}
           </main>
         )}
       </div>

@@ -1,0 +1,447 @@
+"use client";
+
+import {
+  ArrowLeftOutlined, DownloadOutlined, FileExcelOutlined, ReloadOutlined,
+  UnorderedListOutlined,
+} from "@ant-design/icons";
+import { Drawer } from "antd";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  addQuantities, entryLabels, mappingLabels, needsReview, shortDate,
+  type DeliveryDraft, type Entry, type Material, type Summary,
+} from "./delivery-api";
+import { MappingDialog } from "./material-mapping";
+import { messageOf, relayRequest, RelayRequestError } from "./relay-api";
+
+type GridMode = "demand" | "shipment";
+type Mode = GridMode | "review";
+type Selection = { materialId: number; entryIds: number[]; label: string };
+
+function periodKey(entry: Entry, mode: GridMode) {
+  if (mode === "demand") return entry.period;
+  const shipment = entry.shipment;
+  return shipment ? `${shipment.ship_date}|${shipment.mode}|${shipment.manual_eta ?? ""}` : undefined;
+}
+
+function periodLabel(key: string, mode: GridMode) {
+  if (mode === "demand") return key;
+  const [day, transport] = key.split("|");
+  return `${day} · ${transport === "air" ? "空运" : "海运"}`;
+}
+
+function DeliveryGrid({ draft, mode, onSelect }: {
+  draft: DeliveryDraft;
+  mode: GridMode;
+  onSelect: (selection: Selection) => void;
+}) {
+  const [datePage, setDatePage] = useState(0);
+  const data = useMemo(() => {
+    const axis = new Map<string, Entry>();
+    const rows = draft.materials.map((material) => {
+      const cells = new Map<string, Entry[]>();
+      for (const entry of material.entries) {
+        if (mode === "shipment" && material.mapping_state !== "matched") continue;
+        const key = periodKey(entry, mode);
+        if (key === undefined) continue;
+        axis.set(key, entry);
+        const cell = cells.get(key);
+        if (cell) cell.push(entry);
+        else cells.set(key, [entry]);
+      }
+      return { material, cells };
+    });
+    return {
+      axis: [...axis].sort(([left], [right]) => left.localeCompare(right)),
+      rows: mode === "shipment" ? rows.filter(({ cells }) => cells.size > 0) : rows,
+    };
+  }, [draft, mode]);
+  const datesPerPage = 52;
+  const datePages = Math.max(1, Math.ceil(data.axis.length / datesPerPage));
+  const page = Math.min(datePages - 1, datePage);
+  const axis = data.axis.slice(page * datesPerPage, (page + 1) * datesPerPage);
+
+  if (!data.axis.length && mode === "shipment") return (
+    <div className="delivery-empty">
+      <FileExcelOutlined aria-hidden="true" />
+      <h3>还没有发货记录</h3>
+      <p>在客户需求里点开一笔已匹配的日期需求，填写有依据的发货日期和运输方式。</p>
+    </div>
+  );
+
+  return (<>
+    {datePages > 1 && <div className="delivery-date-pages" aria-label="日期列分页">
+      <button className="button" type="button" disabled={page === 0} onClick={() => setDatePage(page - 1)}>上一段</button>
+      <span>{periodLabel(axis[0][0], mode)} 至 {periodLabel(axis.at(-1)![0], mode)}</span>
+      <button className="button" type="button" disabled={page + 1 === datePages} onClick={() => setDatePage(page + 1)}>下一段</button>
+    </div>}
+    <div className="delivery-grid table-scroll" tabIndex={0} aria-label={mode === "demand" ? "客户需求表" : "发货计划表"}>
+      <table>
+        <thead><tr>
+          <th scope="col" className="freeze kn-column">康尼料号</th>
+          <th scope="col" className="freeze customer-column">客户料号 / 订单</th>
+          {axis.map(([key, entry]) => (
+            <th scope="col" key={key}>
+              {periodLabel(key, mode)}
+              {mode === "shipment" && entry.eta && <small>ETA {entry.eta}</small>}
+            </th>
+          ))}
+        </tr></thead>
+        <tbody>{data.rows.map(({ material, cells }) => (
+          <tr key={material.id}>
+            <th scope="row" className="freeze kn-column">
+              {material.mapping_state === "matched" ? material.mapping?.internal_item :
+                <span className="delivery-badge review">{mappingLabels[material.mapping_state]}</span>}
+            </th>
+            <td className="freeze customer-column"><strong>{material.customer_item ?? "—"}</strong><small>{material.order_no ?? "—"}</small></td>
+            {axis.map(([key]) => {
+              const entries = cells.get(key) ?? [];
+              const countable = entries.filter((entry) => entry.state !== "code_review");
+              return (
+                <td className="quantity-cell" key={key}>
+                  {entries.length > 0 && <button className={countable.length ? "quantity-link" : "quantity-link needs-review"}
+                    type="button" onClick={() => onSelect({ materialId: material.id,
+                      entryIds: entries.map(({ id }) => id), label: periodLabel(key, mode) })}>
+                    {countable.length ? addQuantities(countable) : "待核对"}
+                    {countable.length > 0 && countable.length !== entries.length && <span className="review-dot" aria-label="另有待核对记录" />}
+                  </button>}
+                </td>
+              );
+            })}
+          </tr>
+        ))}</tbody>
+      </table>
+    </div>
+  </>);
+}
+
+function ShipmentForm({ entry, busy, error, onSave, onClose }: {
+  entry: Entry;
+  busy: boolean;
+  error: string;
+  onSave: (shipment: object | null) => void;
+  onClose: () => void;
+}) {
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    onSave({
+      ship_date: form.get("ship_date"),
+      mode: form.get("mode"),
+      manual_eta: form.get("manual_eta") || null,
+      source_note: form.get("source_note"),
+    });
+  }
+  return (
+    <form className="account-form shipment-form" onSubmit={submit}>
+      <label>发货日期<input type="date" name="ship_date" required defaultValue={entry.shipment?.ship_date} /></label>
+      <label>运输方式<select name="mode" defaultValue={entry.shipment?.mode ?? ""} required>
+        <option value="" disabled>请选择</option><option value="air">空运 · 14 天</option><option value="sea">海运 · 84 天</option>
+      </select></label>
+      <label>人工 ETA（可选）<input type="date" name="manual_eta" defaultValue={entry.shipment?.manual_eta ?? ""} /></label>
+      <label>发货依据<input name="source_note" maxLength={240} defaultValue={entry.shipment?.source_note}
+        placeholder="例如运输计划编号或确认邮件" required /></label>
+      {error && <p className="notice failed" role="alert">{error}</p>}
+      <div className="account-form-actions">
+        {entry.shipment && <button className="button" type="button" disabled={busy} onClick={() => onSave(null)}>清除发货信息</button>}
+        <button type="button" className="button" disabled={busy} onClick={onClose}>取消</button>
+        <button type="submit" className="button primary-button" disabled={busy}>{busy ? "正在保存…" : "保存发货信息"}</button>
+      </div>
+    </form>
+  );
+}
+
+function DeliveryDetail({ id, admin, review, onChange, onBack, onArchive }: {
+  id: number;
+  admin: boolean;
+  review: boolean;
+  onChange: (draft: DeliveryDraft) => void;
+  onBack: () => void;
+  onArchive: (mailId: number) => void;
+}) {
+  const [detail, setDetail] = useState<DeliveryDraft>();
+  const [mode, setMode] = useState<Mode>(review ? "review" : "demand");
+  const [error, setError] = useState("");
+  const [selection, setSelection] = useState<Selection>();
+  const [mappingMaterial, setMappingMaterial] = useState<Material>();
+  const [shipmentId, setShipmentId] = useState<number>();
+  const [shipmentError, setShipmentError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [reload, setReload] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    relayRequest<DeliveryDraft>(`/delivery/${id}`, { signal: controller.signal })
+      .then((draft) => { if (!controller.signal.aborted) { setDetail(draft); setError(""); } })
+      .catch((reason) => { if (!controller.signal.aborted) setError(messageOf(reason)); });
+    return () => controller.abort();
+  }, [id, reload]);
+
+  async function update(path: string, method: string, values: object, shipments = false) {
+    if (!detail || busy) return;
+    setBusy(true);
+    if (shipments) setShipmentError("");
+    else setError("");
+    try {
+      const draft = await relayRequest<DeliveryDraft>(`/delivery/${id}/${path}`, {
+        method, body: JSON.stringify({ ...values, revision: detail.revision }),
+      });
+      setDetail(draft);
+      onChange(draft);
+      if (shipments) setShipmentId(undefined);
+    } catch (reason) {
+      if (shipments) setShipmentError(messageOf(reason));
+      else setError(messageOf(reason));
+      if (reason instanceof RelayRequestError && reason.status === 409) setReload((value) => value + 1);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function download() {
+    if (!detail) return;
+    setError("");
+    setDownloading(true);
+    try {
+      const response = await fetch(`/api/v1/delivery/${id}/draft.xlsx?revision=${detail.revision}`, { cache: "no-store" });
+      if (response.status === 401) window.dispatchEvent(new Event("relay-session-expired"));
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({})) as { detail?: string };
+        throw new RelayRequestError(response.status, result.detail ?? "");
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `Relay-DRX-${id}-草稿.xlsx`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (reason) {
+      setError(messageOf(reason));
+      if (reason instanceof RelayRequestError && reason.status === 409) setReload((value) => value + 1);
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  function show(selection: Selection) {
+    setShipmentId(undefined);
+    setShipmentError("");
+    setSelection(selection);
+  }
+
+  const material = detail?.materials.find((item) => item.id === selection?.materialId);
+  const entries = material?.entries.filter((entry) => selection?.entryIds.includes(entry.id)) ?? [];
+
+  return (
+    <section className="delivery-detail" aria-label="交付批次详情">
+      <header className="delivery-detail-header">
+        <button className="back-button" type="button" onClick={onBack}><ArrowLeftOutlined /> 返回批次</button>
+        {detail ? (
+          <>
+            <div className="delivery-detail-title">
+              <div>
+                <p className="delivery-eyebrow">德科 DRX · 报文 {detail.document_no ?? "—"}</p>
+                <h2>交付草稿 <span className="delivery-badge review">版本 {detail.revision}</span></h2>
+              </div>
+              <button type="button" className="button primary-button" disabled={downloading || busy} onClick={() => void download()}>
+                <DownloadOutlined aria-hidden="true" /> {downloading ? "正在生成…" : "下载草稿"}
+              </button>
+            </div>
+            <div className="delivery-meta">
+              <button type="button" className="text-button" onClick={() => onArchive(detail.mail_id)} title={detail.filename}>
+                <FileExcelOutlined aria-hidden="true" /> {detail.filename}
+              </button>
+              <span>{shortDate(detail.document_date)}</span>
+            </div>
+          </>
+        ) : <h2>交付草稿</h2>}
+      </header>
+      {error && <p className="notice failed" role="alert">{error}</p>}
+      {!detail && !error && <p className="empty" role="status">正在读取交付草稿…</p>}
+      {detail && (
+        <>
+          <div className="delivery-view-bar">
+            <div className="delivery-view-tabs" aria-label="计划视图">
+              {([["demand", "客户需求"], ["shipment", "发货计划"], ["review", "待核对"]] as const).map(([key, label]) => (
+                <button type="button" key={key} aria-pressed={mode === key} onClick={() => setMode(key)}>
+                  {label}{key === "review" && detail.pending_mappings + detail.pending_entries > 0 &&
+                    <span>{detail.pending_mappings + detail.pending_entries}</span>}
+                </button>
+              ))}
+            </div>
+            {admin && <button type="button" className="button" disabled={busy} onClick={() => void update("refresh", "POST", {})}>
+              <ReloadOutlined aria-hidden="true" /> 重新匹配
+            </button>}
+          </div>
+          {mode === "review" ? (
+            <div className="delivery-review-list">
+              {detail.materials.filter((row) => row.mapping_state !== "matched" || row.entries.some(needsReview)).map((row) => {
+                const pending = row.entries.filter(needsReview);
+                return (
+                  <div className="delivery-review-row" key={row.id}>
+                    <div><strong>{row.customer_item ?? "缺少客户料号"}</strong><small>订单 {row.order_no ?? "—"} · {pending.length} 条需求待核对</small></div>
+                    <span className={`delivery-badge ${row.mapping_state === "matched" ? "" : "review"}`}>{mappingLabels[row.mapping_state]}</span>
+                    {admin && row.mapping_state === "missing" && row.customer_item && row.order_no &&
+                      <button type="button" className="button" disabled={busy} onClick={() => setMappingMaterial(row)}>补充映射</button>}
+                    {admin && row.mapping_state === "supplier_mismatch" && row.mapping &&
+                      <button type="button" className="button" disabled={busy} onClick={() => setMappingMaterial(row)}>核对映射</button>}
+                    <button type="button" className="text-button" onClick={() => show({
+                      materialId: row.id, entryIds: pending.map(({ id: entryId }) => entryId), label: "待核对记录",
+                    })}>查看记录</button>
+                  </div>
+                );
+              })}
+              {detail.pending_mappings + detail.pending_entries === 0 && <p className="empty">该批次没有待核对记录</p>}
+            </div>
+          ) : (
+            <DeliveryGrid key={mode} draft={detail} mode={mode} onSelect={show} />
+          )}
+        </>
+      )}
+      <Drawer open={selection !== undefined} title="数量与来源" size={540} onClose={() => setSelection(undefined)}>
+        {material && <>
+          <div className="delivery-source-summary">
+            <h3>{material.customer_item ?? "未知物料"} <span className="delivery-badge">{mappingLabels[material.mapping_state]}</span></h3>
+            <p>订单 {material.order_no ?? "—"} · {selection?.label}</p>
+            {material.mapping_state === "matched" && material.mapping &&
+              <p>康尼料号 {material.mapping.internal_item} · 映射 #{material.mapping.id} · 版本 {material.mapping.revision}</p>}
+            {material.customer_item_cell && <p className="source-coordinate">{material.customer_item_cell}</p>}
+            {admin && material.mapping_state === "missing" && material.customer_item && material.order_no &&
+              <button type="button" className="button" disabled={busy} onClick={() => setMappingMaterial(material)}>补充映射</button>}
+          </div>
+          {entries.map((entry) => (
+            <article className="delivery-source-row" key={entry.id}>
+              <div className="delivery-source-title">
+                <strong>{addQuantities([entry])} <small>{entry.unit ?? ""}</small></strong>
+                <span className={`delivery-badge ${needsReview(entry) ? "review" : ""}`}>{entryLabels[entry.state]}</span>
+              </div>
+              <dl>
+                <div><dt>附件原值</dt><dd>{entry.raw_quantity ?? entry.quantity}</dd></div>
+                <div><dt>原始日期</dt><dd>{entry.requested_date ?? (entry.earliest_date || entry.latest_date ? entry.period : "—")}</dd></div>
+                <div><dt>数量位置</dt><dd className="source-coordinate">{entry.quantity_cell ?? "—"}</dd></div>
+                <div><dt>日期位置</dt><dd className="source-coordinate">{[entry.date_cell, entry.end_date_cell].filter(Boolean).join(" / ") || "—"}</dd></div>
+                <div><dt>数量类型 / 状态</dt><dd>{entry.code ?? "—"} / {entry.status_code ?? "—"}</dd></div>
+                {entry.shipment && <>
+                  <div><dt>发货日 / 运输</dt><dd>{entry.shipment.ship_date} · {entry.shipment.mode === "air" ? "空运" : "海运"}</dd></div>
+                  <div><dt>ETA</dt><dd>{entry.eta}（{entry.shipment.manual_eta ? "人工填报" : entry.shipment.mode === "air" ? "发货日 + 14 天" : "发货日 + 84 天"}）</dd></div>
+                  <div><dt>发货依据</dt><dd>{entry.shipment.source_note} · {entry.shipment.entered_by}</dd></div>
+                </>}
+              </dl>
+              {admin && material.mapping_state === "matched" && (entry.state === "scheduled" || entry.state === "transport_missing") &&
+                (shipmentId === entry.id ? <ShipmentForm entry={entry} busy={busy} error={shipmentError}
+                  onClose={() => setShipmentId(undefined)}
+                  onSave={(shipment) => void update(`shipments/${entry.id}`, "PUT", { shipment }, true)} />
+                  : <button type="button" className="button" disabled={busy} onClick={() => {
+                    setShipmentError(""); setShipmentId(entry.id);
+                  }}>{entry.shipment ? "编辑发货信息" : "填写发货信息"}</button>)}
+            </article>
+          ))}
+        </>}
+      </Drawer>
+      {mappingMaterial && <MappingDialog
+        existing={mappingMaterial.mapping ?? undefined}
+        initial={mappingMaterial.mapping ?? { customer: "drx", customer_item: mappingMaterial.customer_item ?? "",
+          order_no: mappingMaterial.order_no, order_line: mappingMaterial.order_line,
+          supplier_item: mappingMaterial.supplier_item }}
+        onClose={() => setMappingMaterial(undefined)}
+        onSaved={() => { setMappingMaterial(undefined); void update("refresh", "POST", {}); }} />}
+    </section>
+  );
+}
+
+export function DeliveryWorkspace({ admin, draftId, onSelect, review = false, onArchive, onQueue }: {
+  admin: boolean;
+  draftId: number | undefined;
+  onSelect: (id: number | undefined) => void;
+  review?: boolean;
+  onArchive: (mailId: number) => void;
+  onQueue: () => void;
+}) {
+  const [rows, setRows] = useState<Summary[]>();
+  const [status, setStatus] = useState("all");
+  const [search, setSearch] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [error, setError] = useState("");
+  const [more, setMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [refresh, setRefresh] = useState(0);
+  const query = `/delivery?${new URLSearchParams({ review: String(review || status === "review"), q: searchQuery })}`;
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setSearchQuery(search.trim()), 220);
+    return () => window.clearTimeout(timeout);
+  }, [search]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    relayRequest<Summary[]>(query, { signal: controller.signal })
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        setRows(result);
+        setMore(result.length === 100);
+        setError("");
+      })
+      .catch((reason) => { if (!controller.signal.aborted) setError(messageOf(reason)); });
+    return () => controller.abort();
+  }, [query, refresh]);
+
+  async function loadMore() {
+    const before = rows?.at(-1)?.id;
+    if (!before || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const result = await relayRequest<Summary[]>(`${query}&before=${before}`);
+      setRows((current) => current?.at(-1)?.id === before ? [...current, ...result] : current);
+      setMore(result.length === 100);
+    } catch (reason) {
+      setError(messageOf(reason));
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  return (
+    <main className={`workbench delivery-workbench ${draftId !== undefined ? "batch-open" : ""}`}>
+      <div className="delivery-workbench-header">
+        <div><h1>{review ? "交付待核对" : "交付计划"}</h1><p>{review ? "处理物料匹配和交付记录中的待核对项。" : "按报文批次核对需求、发货安排和交付文件。"}</p></div>
+        {review && <button className="button" type="button" onClick={onQueue}><UnorderedListOutlined aria-hidden="true" /> 邮件待处理</button>}
+      </div>
+      <div className="delivery-columns">
+        <aside className="delivery-batch-list" aria-label="交付批次">
+          <div className="delivery-batch-filters">
+            <h2>交付批次</h2>
+            <input value={search} aria-label="搜索交付批次" placeholder="搜索报文或附件" maxLength={120}
+              onChange={(event) => setSearch(event.target.value)} />
+            {!review && <select aria-label="按核对状态筛选" value={status} onChange={(event) => {
+              setRows(undefined); setStatus(event.target.value);
+            }}>
+              <option value="all">全部状态</option><option value="review">待核对</option>
+            </select>}
+          </div>
+          {error && <p className="notice failed" role="alert">{error}</p>}
+          {rows?.map((row) => {
+            const pending = row.pending_mappings + row.pending_entries;
+            return (
+              <button className={`delivery-batch ${row.id === draftId ? "selected" : ""}`} type="button"
+                key={row.id} aria-current={row.id === draftId ? "true" : undefined} onClick={() => onSelect(row.id)}>
+                <span><strong>德科 DRX</strong><span className={`delivery-badge ${pending ? "review" : ""}`}>{pending ? "待核对" : "草稿"}</span></span>
+                <span>报文 {row.document_no ?? "—"}<time>{shortDate(row.document_date)}</time></span>
+                {pending > 0 && <small>{row.pending_mappings} 个物料 · {row.pending_entries} 条需求</small>}
+              </button>
+            );
+          })}
+          {more && <button className="button batch-more" type="button" disabled={loadingMore} onClick={() => void loadMore()}>加载更多</button>}
+          {!error && !rows?.length && <p className="empty">{rows ? "没有符合条件的交付批次" : "正在读取批次…"}</p>}
+        </aside>
+        {draftId !== undefined ?
+          <DeliveryDetail key={draftId} id={draftId} admin={admin} review={review} onChange={() => setRefresh((value) => value + 1)}
+            onArchive={onArchive} onBack={() => onSelect(undefined)} />
+          : <section className="delivery-empty">
+            <FileExcelOutlined aria-hidden="true" />
+            <h2>{rows?.length ? "选择交付批次" : "暂无交付草稿"}</h2>
+            <p>{rows?.length ? "从左侧打开批次，查看客户需求和核对状态。" : "管理员可以从收件档案中的德科附件生成草稿。"}</p>
+          </section>}
+      </div>
+    </main>
+  );
+}
