@@ -114,9 +114,14 @@
 .shipment-form .account-form-actions { flex-wrap: wrap; }
 
 .mapping-card { max-width: none; min-width: 0; }
+.mapping-list-heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-bottom: .85rem; }
+.mapping-list-count, .mapping-source-file > small { color: var(--muted); font-size: .76rem; }
 .mapping-card .delivery-toolbar { margin-bottom: .85rem; flex-wrap: wrap; }
 .mapping-card .table-scroll { margin-bottom: .7rem; }
 .mapping-card td { overflow-wrap: anywhere; }
+.mapping-source-file { display: block; max-width: 19rem; font-size: .8rem; }
+.mapping-source-file > small { display: block; margin-top: .2rem; }
+.mapping-row-action { white-space: nowrap; }
 .mapping-card .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 .ant-modal .mapping-modal-panel {
@@ -156,6 +161,9 @@
   padding: 1.25rem var(--mapping-inset);
 }
 .mapping-form { display: grid; gap: 1.15rem; }
+.mapping-source-note { display: flex; align-items: flex-start; gap: .55rem; padding: .65rem .75rem; border-radius: 6px; background: #eef5fa; color: var(--blue-dark); font-size: .83rem; overflow-wrap: anywhere; }
+.mapping-source-note > .anticon { margin-top: .1rem; }
+.mapping-source-note small { display: block; margin-top: .15rem; color: var(--muted); }
 .mapping-form fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .mapping-form-heading { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; margin-bottom: .72rem; }
 .mapping-form-heading h3 { color: var(--ink); font-size: .96rem; font-weight: 680; }

@@ -20,6 +20,16 @@ docker compose --env-file .env -f deployments/docker-compose.yml up --build --wa
 
 ## 物料匹配和德科交付草稿
 
+管理员可在「物料匹配 → 待匹配」按客户和料号检索原始 Excel 提取的记录。点击「补录康尼料号」会带入已有的订单和料号。保存后可在「已匹配」查看。来源列保留报文文件名及客户料号所在的单元格。
+
+启动当前版本的 Compose 后，可以在仓库根目录重复执行以下命令，按客户和匹配范围去重导入。相同范围及供应商料号只保留最新报文的来源，已经保存的映射继续生效。
+
+```sh
+docker compose -f deployments/docker-compose.yml run --rm --no-deps \
+  -v "$PWD/samples/edi/EDI项目所需表格/收到的原始表格:/tmp/material-samples:ro" \
+  api python -m relay.workers.import_materials /tmp/material-samples
+```
+
 管理员从「收件档案」打开已解析的德科附件，选择「生成交付草稿」。在「待核对」里可就地补录映射，也可以在「物料匹配」统一维护。点击需求数量可查看来源单元格。对已匹配且有明确日期的需求，可录入有依据的发货日、运输方式及可选的人工 ETA。
 
 「下载草稿」生成包含「给生产」和「需求与来源」的 XLSX。「给生产」的发货数量来自已录入发货安排的记录，其余需求可在「需求与来源」核对。查询用户可查看和下载已生成的草稿。其他客户的生成工作见[工作地图](docs/工作地图.md#当前工作包)。

@@ -16,9 +16,79 @@ from relay.auth.accounts import Role, User
 from relay.database.session import get_engine
 from relay.mail.intake import MailIdentity, receive
 from relay.storage.archive import Archive
+from relay.workers.import_materials import import_directory
 from relay.workers.parser import process_one
 
 _BROWSER = {"X-Relay-Request": "1"}
+
+
+@pytest.mark.skipif(os.environ.get("RELAY_TEST_DB") != "1", reason="Requires test PostgreSQL")
+def test_imported_material_waits_for_confirmed_mapping(
+    tmp_path: Path, signed_in: Callable[[TestClient, Role], User], request: pytest.FixtureRequest
+) -> None:
+    item = "00" + uuid4().hex[:8]
+
+    def cleanup() -> None:
+        with get_engine().begin() as connection:
+            connection.execute(
+                text("DELETE FROM material_candidates WHERE customer_item = :item"), {"item": item}
+            )
+            connection.execute(
+                text("DELETE FROM material_mappings WHERE customer_item = :item"), {"item": item}
+            )
+
+    request.addfinalizer(cleanup)
+    for filename, document_date in [("a-new.xlsx", "20261122"), ("z-old.xlsx", "20261115")]:
+        workbook = Workbook()
+        workbook.active.title = "交付明细"
+        workbook.create_sheet("字段路径对照")
+        sheet = workbook["交付明细"]
+        sheet.append(["ZF DELFOR 交付预测"])
+        sheet.append(["报文日期\nDocDate", document_date, "收货方编号\nShipToNo", "06124"])
+        sheet.append(["客户件号\nCustomerPartNo", item])
+        workbook.save(tmp_path / filename)
+        workbook.close()
+
+    path = f"/api/v1/material-mappings/candidates?customer=zf&q={item}"
+    assert import_directory(tmp_path) == (2, {"zf": 1})
+    with TestClient(app) as viewer, TestClient(app) as admin:
+        signed_in(viewer, "viewer")
+        signed_in(admin, "admin")
+        assert viewer.get(path).status_code == 403
+        response = admin.get(path)
+        assert response.status_code == 200
+        candidates = response.json()
+        assert len(candidates) == 1
+        assert candidates[0] == {
+            "id": candidates[0]["id"],
+            "customer": "zf",
+            "customer_item": item,
+            "order_no": None,
+            "order_line": None,
+            "ship_to": "06124",
+            "supplier_item": None,
+            "source_filename": "a-new.xlsx",
+            "source_cell": "交付明细!B3",
+            "source_date": "2026-11-22",
+        }
+        assert import_directory(tmp_path) == (2, {"zf": 1})
+        assert admin.get(path).json() == candidates
+
+        saved = admin.post(
+            "/api/v1/material-mappings",
+            headers=_BROWSER,
+            json={
+                "customer": "zf",
+                "customer_item": item,
+                "internal_item": "0000024",
+                "ship_to": "06124",
+            },
+        )
+        assert saved.status_code == 201
+        assert import_directory(tmp_path) == (2, {"zf": 1})
+        assert admin.get(path).json() == []
+        mappings = admin.get(f"/api/v1/material-mappings?customer=zf&q={item}").json()
+        assert [mapping["internal_item"] for mapping in mappings] == ["0000024"]
 
 
 def _remove_test_delivery(mail_id: int, item: str) -> None:

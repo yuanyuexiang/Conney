@@ -96,7 +96,7 @@ def _verify_archive(path: Path) -> None:
             raise ParseError("Workbook exceeds archive limits")
 
 
-def load_rows(path: Path) -> WorkbookRows:
+def load_rows(path: Path, *, sheet_name: str | None = None) -> WorkbookRows:
     try:
         _verify_archive(path)
         with path.open("rb") as source:
@@ -105,9 +105,14 @@ def load_rows(path: Path) -> WorkbookRows:
         raise ParseError("Invalid XLSX package") from error
 
     try:
-        if len(workbook.worksheets) != 1:
-            raise ParseError("Expected one worksheet")
-        sheet = workbook.worksheets[0]
+        if sheet_name is None:
+            if len(workbook.worksheets) != 1:
+                raise ParseError("Expected one worksheet")
+            sheet = workbook.worksheets[0]
+        else:
+            if sheet_name not in workbook.sheetnames:
+                raise ParseError(f"Missing worksheet {sheet_name}")
+            sheet = workbook[sheet_name]
         if sheet.max_row > _MAX_ROWS or sheet.max_column > _MAX_COLUMNS:
             raise ParseError("Worksheet exceeds row or column limits")
         rows = list(sheet.iter_rows(max_col=sheet.max_column + 1))

@@ -3,6 +3,7 @@ export const customerLabels = {
   kroschu: "科伯舒特",
   jlr: "捷豹路虎",
   vitesco: "舍弗勒 / Vitesco",
+  zf: "采埃孚 ZF",
 } as const;
 
 export type Customer = keyof typeof customerLabels;
@@ -23,6 +24,15 @@ export type MappingValues = {
 };
 
 export type MaterialMapping = MappingValues & { id: number; revision: number };
+
+export type MaterialCandidate = Pick<MappingValues,
+  "customer" | "customer_item" | "order_no" | "order_line" | "ship_to" | "supplier_item"
+> & {
+  id: number;
+  source_filename: string;
+  source_cell: string;
+  source_date: string;
+};
 
 export type Shipment = {
   ship_date: string;

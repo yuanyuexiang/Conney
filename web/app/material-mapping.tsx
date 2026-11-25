@@ -1,9 +1,11 @@
 "use client";
 
-import { DownOutlined, PlusOutlined, SearchOutlined, TagsOutlined } from "@ant-design/icons";
+import { DownOutlined, FileExcelOutlined, PlusOutlined, SearchOutlined, TagsOutlined } from "@ant-design/icons";
 import { Modal } from "antd";
 import { type FormEvent, useEffect, useId, useState } from "react";
-import { customerLabels, type Customer, type MappingValues, type MaterialMapping } from "./delivery-api";
+import {
+  customerLabels, type Customer, type MappingValues, type MaterialCandidate, type MaterialMapping,
+} from "./delivery-api";
 import { messageOf, relayRequest } from "./relay-api";
 import { WorkbenchSelect } from "./workbench-select";
 
@@ -35,9 +37,10 @@ function FieldName({ label, required }: { label: string; required?: boolean }) {
   </span>;
 }
 
-export function MappingDialog({ initial, existing, onClose, onSaved }: {
+export function MappingDialog({ initial, existing, source, onClose, onSaved }: {
   initial: Partial<MappingValues>;
   existing?: MaterialMapping;
+  source?: MaterialCandidate;
   onClose: () => void;
   onSaved: (mapping: MaterialMapping) => void;
 }) {
@@ -83,7 +86,7 @@ export function MappingDialog({ initial, existing, onClose, onSaved }: {
   return (
     <Modal open title={<div className="mapping-modal-title">
       <span className="mapping-modal-icon"><TagsOutlined aria-hidden="true" /></span>
-      <span>{existing ? "编辑物料匹配" : "新增物料匹配"}</span>
+      <span>{existing ? "编辑物料匹配" : source ? "补录物料匹配" : "新增物料匹配"}</span>
     </div>} width={688} centered
       classNames={{
         container: "mapping-modal-panel", header: "mapping-modal-header", body: "mapping-modal-body",
@@ -106,6 +109,10 @@ export function MappingDialog({ initial, existing, onClose, onSaved }: {
           const group = (event.target as HTMLElement).closest("details");
           if (group) group.open = true;
         }}>
+        {source && <div className="mapping-source-note">
+          <FileExcelOutlined aria-hidden="true" />
+          <span>{source.source_filename}<small>{source.source_cell} · {source.source_date}</small></span>
+        </div>}
         <fieldset disabled={saving} aria-labelledby={matchHeading}>
           <div className="mapping-form-heading">
             <h3 id={matchHeading}>基本匹配</h3>
@@ -144,48 +151,67 @@ export function MappingDialog({ initial, existing, onClose, onSaved }: {
 }
 
 export function MaterialMappingPage() {
-  const [rows, setRows] = useState<MaterialMapping[]>();
+  type MappingRow = MaterialMapping | MaterialCandidate;
+  const [result, setResult] = useState<{ key: string; rows: MappingRow[]; hasMore: boolean }>();
+  const [view, setView] = useState<"pending" | "matched">("pending");
   const [q, setQ] = useState("");
   const [customer, setCustomer] = useState<Customer | "">("");
   const [revision, setRevision] = useState(0);
-  const [error, setError] = useState("");
+  const [failure, setFailure] = useState<{ key: string; message: string }>();
   const [saved, setSaved] = useState("");
-  const [editing, setEditing] = useState<MaterialMapping | "new">();
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(false);
+  const [editing, setEditing] = useState<MappingRow | "new">();
+  const [loadingPage, setLoadingPage] = useState<string>();
   const [query, setQuery] = useState("");
   const params = new URLSearchParams({ q: query, ...(customer ? { customer } : {}) }).toString();
+  const pending = view === "pending";
+  const endpoint = pending ? "/material-mappings/candidates" : "/material-mappings";
+  const requestUrl = `${endpoint}?${params}`;
+  const key = `${requestUrl}#${revision}`;
+  const rows = result?.key === key ? result.rows : undefined;
+  const hasMore = result?.key === key && result.hasMore;
+  const loadingMore = loadingPage === key;
+  const error = failure?.key === key ? failure.message : "";
 
   useEffect(() => {
     const controller = new AbortController();
-    relayRequest<MaterialMapping[]>(`/material-mappings?${params}`, { signal: controller.signal })
+    relayRequest<MappingRow[]>(requestUrl, { signal: controller.signal })
       .then((result) => {
         if (controller.signal.aborted) return;
-        setRows(result);
-        setHasMore(result.length === 100);
-        setError("");
+        setResult({ key, rows: result, hasMore: result.length === 100 });
+        setFailure(undefined);
       })
-      .catch((reason) => { if (!controller.signal.aborted) setError(messageOf(reason)); });
+      .catch((reason) => {
+        if (!controller.signal.aborted) setFailure({ key, message: messageOf(reason) });
+      });
     return () => controller.abort();
-  }, [params, revision]);
+  }, [key, requestUrl]);
 
   async function more() {
     const before = rows?.at(-1)?.id;
     if (!before || loadingMore) return;
-    setLoadingMore(true);
+    setLoadingPage(key);
     try {
-      const result = await relayRequest<MaterialMapping[]>(`/material-mappings?${params}&before=${before}`);
-      setRows((current) => current?.at(-1)?.id === before ? [...current, ...result] : current);
-      setHasMore(result.length === 100);
+      const next = await relayRequest<MappingRow[]>(`${requestUrl}&before=${before}`);
+      setResult((current) => current?.key === key && current.rows.at(-1)?.id === before
+        ? { key, rows: [...current.rows, ...next], hasMore: next.length === 100 }
+        : current);
+      setFailure((current) => current?.key === key ? undefined : current);
     } catch (reason) {
-      setError(messageOf(reason));
+      setFailure((current) => current && current.key !== key ? current : { key, message: messageOf(reason) });
     } finally {
-      setLoadingMore(false);
+      setLoadingPage((current) => current === key ? undefined : current);
     }
   }
 
   return (
     <section className="page-card mapping-card" aria-label="物料匹配列表">
+      <div className="mapping-list-heading">
+        <div className="delivery-view-tabs" role="group" aria-label="物料匹配状态">
+          <button type="button" aria-pressed={pending} onClick={() => setView("pending")}>待匹配</button>
+          <button type="button" aria-pressed={!pending} onClick={() => setView("matched")}>已匹配</button>
+        </div>
+        {rows && <span className="mapping-list-count">{hasMore ? "已加载 " : ""}{rows.length} 条</span>}
+      </div>
       <div className="delivery-toolbar">
         <form className="delivery-filters" onSubmit={(event) => { event.preventDefault(); setQuery(q.trim()); }}>
           <label className="sr-only" htmlFor="mapping-search">搜索料号或订单</label>
@@ -204,18 +230,28 @@ export function MaterialMappingPage() {
       {rows && rows.length > 0 ? (
         <div className="table-scroll">
           <table><thead><tr>
-            {["客户", "客户料号", "康尼料号", "订单", "订单行 / 收货方", "供应商料号", "操作"].map((label) => <th scope="col" key={label}>{label}</th>)}
+            {["客户", "客户料号", pending ? "来源表格" : "康尼料号", "采购订单", "订单行 / 收货方", "供应商料号", "操作"]
+              .map((label) => <th scope="col" key={label}>{label}</th>)}
           </tr></thead><tbody>{rows.map((row) => <tr key={row.id}>
-            <td>{customerLabels[row.customer]}</td><td>{row.customer_item}</td><td><strong>{row.internal_item}</strong></td>
+            <td>{customerLabels[row.customer]}</td><td><strong>{row.customer_item}</strong></td>
+            <td>{"internal_item" in row ? <strong>{row.internal_item}</strong> :
+              <span className="mapping-source-file" title={row.source_filename}>{row.source_filename}<small>{row.source_cell}</small></span>}</td>
             <td>{row.order_no || "—"}</td><td>{row.order_line || "—"} / {row.ship_to || "—"}</td><td>{row.supplier_item || "—"}</td>
-            <td><button type="button" className="text-button" onClick={() => { setSaved(""); setEditing(row); }}>编辑</button></td>
+            <td><button type="button" className="text-button mapping-row-action" onClick={() => { setSaved(""); setEditing(row); }}>
+              {pending ? "补录康尼料号" : "编辑"}
+            </button></td>
           </tr>)}</tbody></table>
         </div>
-      ) : !error && <p className="empty" role="status">{rows ? "没有匹配的物料记录" : "正在读取物料映射…"}</p>}
+      ) : !error && <p className="empty" role="status">
+        {rows ? (pending ? "没有符合条件的待匹配物料" : "没有符合条件的已匹配物料") : "正在读取物料记录…"}
+      </p>}
       {hasMore && <button type="button" className="button" disabled={loadingMore} onClick={() => void more()}>加载更多</button>}
       {editing && <MappingDialog initial={editing === "new" ? { customer: customer || "drx" } : editing}
-        existing={editing === "new" ? undefined : editing} onClose={() => setEditing(undefined)}
+        existing={editing !== "new" && "internal_item" in editing ? editing : undefined}
+        source={editing !== "new" && "source_filename" in editing ? editing : undefined}
+        onClose={() => setEditing(undefined)}
         onSaved={(mapping) => {
+          if (editing === "new") setView("matched");
           setRevision((value) => value + 1);
           setSaved(`已保存 ${mapping.customer_item} → ${mapping.internal_item}`);
           setEditing(undefined);

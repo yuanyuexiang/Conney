@@ -18,6 +18,7 @@ from relay.services.delivery import (
     DraftSnapshot,
     MappingEdit,
     MappingValues,
+    MaterialCandidate,
     MaterialMapping,
     Shipment,
     ShipmentInput,
@@ -89,6 +90,46 @@ def list_mappings(
             {"customer": customer, "before": before, "q": q.strip()},
         ).mappings()
         return [MaterialMapping.model_validate(row) for row in rows]
+
+
+@router.get("/material-mappings/candidates")
+def list_material_candidates(
+    _: AdminUser,
+    q: Annotated[str, Query(max_length=120)] = "",
+    customer: Customer | None = None,
+    before: Annotated[int, Query(gt=0)] | None = None,
+) -> list[MaterialCandidate]:
+    with get_engine().connect() as connection:
+        rows = connection.execute(
+            text("""
+                SELECT c.id, c.customer, c.customer_item, c.order_no, c.order_line, c.ship_to,
+                       c.supplier_item, c.source_filename, c.source_cell, c.source_date
+                FROM material_candidates AS c
+                WHERE (CAST(:customer AS text) IS NULL OR c.customer = :customer)
+                  AND (CAST(:before AS bigint) IS NULL OR c.id < :before)
+                  AND (:q = '' OR strpos(lower(concat_ws(' ', c.customer_item, c.supplier_item,
+                        c.order_no, c.order_line, c.ship_to)), lower(:q)) > 0)
+                  AND NOT (
+                      SELECT count(*) = 1
+                          AND bool_and(best.supplier_item IS NULL
+                              OR best.supplier_item IS NOT DISTINCT FROM c.supplier_item)
+                      FROM (
+                          SELECT m.supplier_item
+                          FROM material_mappings AS m
+                          WHERE m.customer = c.customer AND m.customer_item = c.customer_item
+                            AND (m.order_key IS NULL OR m.order_key = c.order_key)
+                            AND (m.order_line IS NULL OR m.order_line = c.order_line)
+                            AND (m.ship_to IS NULL OR m.ship_to = c.ship_to)
+                          ORDER BY (m.order_key IS NOT NULL)::int + (m.order_line IS NOT NULL)::int
+                              + (m.ship_to IS NOT NULL)::int DESC
+                          FETCH FIRST 1 ROW WITH TIES
+                      ) AS best
+                  )
+                ORDER BY c.id DESC LIMIT 100
+            """),
+            {"customer": customer, "before": before, "q": q.strip()},
+        ).mappings()
+        return [MaterialCandidate.model_validate(row) for row in rows]
 
 
 def _save_mapping(

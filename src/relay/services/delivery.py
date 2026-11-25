@@ -13,7 +13,7 @@ from pydantic import (
     model_validator,
 )
 
-Customer = Literal["drx", "kroschu", "jlr", "vitesco"]
+Customer = Literal["drx", "kroschu", "jlr", "vitesco", "zf"]
 Identifier = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
 PackSize = Annotated[int, Field(gt=0, le=1_000_000_000)]
 MappingState = Literal["matched", "missing", "ambiguous", "supplier_mismatch"]
@@ -30,27 +30,40 @@ def matching_order(customer: Customer, order: str | None) -> str | None:
     return order
 
 
-class MappingValues(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class MaterialScope(BaseModel):
     customer: Customer
     customer_item: Identifier
-    internal_item: Identifier
     order_no: Identifier | None = None
     order_line: Identifier | None = None
     ship_to: Identifier | None = None
     supplier_item: Identifier | None = None
+
+    @model_validator(mode="after")
+    def check_scope(self) -> "MaterialScope":
+        if self.customer == "drx" and self.order_no is None:
+            raise ValueError("A DRX mapping requires a purchase order")
+        return self
+
+
+class MappingValues(MaterialScope):
+    model_config = ConfigDict(extra="forbid")
+
+    internal_item: Identifier
     drawing: Identifier | None = None
     minimum_pack: PackSize | None = None
     units_per_carton: PackSize | None = None
     cartons_per_pallet: PackSize | None = None
     safety_stock: Annotated[int, Field(ge=0, le=1_000_000_000)] | None = None
 
-    @model_validator(mode="after")
-    def check_scope(self) -> "MappingValues":
-        if self.customer == "drx" and self.order_no is None:
-            raise ValueError("A DRX mapping requires a purchase order")
-        return self
+
+class MaterialObservation(MaterialScope):
+    source_filename: str
+    source_cell: str
+    source_date: date
+
+
+class MaterialCandidate(MaterialObservation):
+    id: int
 
 
 class MaterialMapping(MappingValues):
