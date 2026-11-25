@@ -166,15 +166,6 @@
 .nav-item:hover, .nav-item.active { color: white; background: var(--nav-active); }
 .nav-item.active { font-weight: 650; }
 .nav-item:focus-visible { outline-color: #8fcef5; outline-offset: -2px; }
-.nav-count {
-  margin-left: auto;
-  padding: .1rem .35rem;
-  border-radius: 4px;
-  color: #f3f8fc;
-  background: #355e7d;
-  font-size: .73rem;
-  font-variant-numeric: tabular-nums;
-}
 .sidebar-footer {
   display: grid;
   gap: .32rem;
@@ -216,7 +207,7 @@
 .workbench-heading-actions { flex-wrap: wrap; justify-content: flex-end; gap: .55rem; margin-inline-start: auto; }
 .workbench-heading-actions .button { min-height: 36px; }
 .management-page > .page-card,
-.management-page > :is(.mailbox-settings, .user-management) > .page-card:first-of-type { margin-top: 0; }
+.management-page > .user-management > .page-card:first-of-type { margin-top: 0; }
 .refresh-button { flex: none; }
 .search {
   display: flex;
@@ -281,76 +272,6 @@
 .onboarding-steps h3 { margin: .04rem 0 .25rem; font-size: .94rem; font-weight: 670; }
 .onboarding-steps p { color: var(--muted); font-size: .82rem; line-height: 1.55; }
 
-.queue-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; margin-bottom: .92rem; }
-.queue-metric {
-  --metric-ink: #365a78;
-  --metric-fill: #eaf2fa;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: .7rem;
-  min-height: 69px;
-  padding: .8rem .9rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: white;
-  color: var(--ink);
-  text-align: left;
-  font-size: .9rem;
-  font-weight: 630;
-}
-.queue-metric.failed { --metric-ink: #9b3530; --metric-fill: #fcebe8; }
-.queue-metric.review { --metric-ink: #765008; --metric-fill: #fff3da; }
-.queue-metric:hover, .queue-metric[aria-pressed="true"] { border-color: var(--metric-ink); }
-.queue-metric[aria-pressed="true"] { background: var(--metric-fill); }
-.queue-metric-icon { display: grid; place-items: center; width: 33px; height: 33px; border-radius: 6px; background: var(--metric-fill); color: var(--metric-ink); }
-.queue-metric strong { color: var(--metric-ink); font-size: 1.38rem; font-variant-numeric: tabular-nums; }
-.queue-idle .queue-list-header .search { max-width: 23rem; }
-.queue-empty { display: flex; flex-wrap: wrap; align-items: center; gap: .85rem; padding: 1.3rem 1rem; }
-.queue-empty h3 { font-size: 1rem; font-weight: 670; }
-.queue-empty p { margin-top: .25rem; color: var(--muted); font-size: .85rem; line-height: 1.5; }
-.queue-empty .text-button { margin-inline-start: auto; }
-
-.workspace {
-  display: grid;
-  grid-template-columns: clamp(210px, 26vw, 330px) minmax(0, 1fr);
-  align-items: start;
-  min-width: 0;
-  min-height: min(450px, 55vh);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: white;
-}
-.mail-list { min-width: 0; align-self: stretch; border-right: 1px solid var(--border); }
-.workspace.queue-idle { grid-template-columns: minmax(0, 1fr); min-height: 0; }
-.queue-idle .mail-list { border-right: 0; }
-.queue-list-header { padding: .7rem .9rem .76rem; border-bottom: 1px solid var(--border); }
-.queue-list-heading { display: flex; align-items: center; justify-content: space-between; gap: .55rem; min-height: 27px; }
-.queue-list-heading h2 { font-size: .9rem; font-weight: 660; }
-.queue-list-heading span { color: var(--muted); font-size: .77rem; }
-.queue-list-heading .text-button { font-size: .8rem; white-space: nowrap; }
-.queue-list-header .search { margin-top: .47rem; }
-.mail-item {
-  display: grid;
-  gap: .28rem;
-  width: 100%;
-  min-width: 0;
-  padding: .75rem .85rem .72rem;
-  border: 0;
-  border-left: 3px solid transparent;
-  border-bottom: 1px solid var(--border);
-  color: var(--ink);
-  background: white;
-  text-align: left;
-}
-.mail-item:hover { background: var(--surface); }
-.mail-item.selected { border-left-color: var(--blue); background: var(--blue-light); }
-.mail-item:focus-visible { outline-offset: -3px; }
-.mail-subject, .mail-sender { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mail-subject { font-size: .9rem; font-weight: 660; }
-.mail-sender { font-size: .81rem; color: var(--secondary); }
-.mail-item-bottom { display: flex; justify-content: space-between; align-items: center; gap: .38rem; }
-.mail-item time { color: var(--muted); white-space: nowrap; font-size: .74rem; }
 .status.archived { color: #4b5e71; background: #ebeff4; }
 
 .mail-detail { min-width: 0; }
@@ -387,6 +308,7 @@
 .archive-filter-option { display: flex; align-items: center; gap: .58rem; }
 .archive-filter-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: #647b8d; }
 .archive-filter-dot.all { background: transparent; border: 1px solid #70869a; }
+.archive-filter-dot.follow_up { background: #9d6d13; }
 .archive-filter-dot.complete { background: #198252; }
 .archive-filter-dot.failed { background: #b94a48; }
 .archive-filter-dot.review { background: #9d6d13; }
@@ -484,10 +406,6 @@
   .app-shell { height: 100dvh; }
   .body-layout { min-height: 0; }
   .workbench, .sidebar { overflow-y: auto; }
-  .queue-layout { max-height: max(285px, calc(100dvh - 17rem)); align-items: stretch; }
-  .queue-layout .mail-list { display: flex; flex-direction: column; min-height: 0; }
-  .queue-layout .mail-items, .queue-layout .mail-detail { overflow-y: auto; }
-  .queue-list-header { flex: none; }
 }
 @media (max-width: 760px) {
   .topbar { flex-wrap: wrap; }
@@ -502,20 +420,12 @@
   .nav-item { min-height: 38px; }
   .onboarding.with-steps { grid-template-columns: minmax(0, 1fr); }
   .onboarding-main { min-height: 230px; }
-  .workspace { display: block; min-height: 0; }
-  .mail-list { border-right: 0; }
-  .workspace .mail-detail, .workspace.detail-open .mail-list { display: none; }
-  .workspace.detail-open .mail-detail, .back-button { display: block; }
+  .back-button { display: block; }
 }
 @media (max-width: 500px) {
   .topbar { gap: .5rem; }
   .topbar-meta { width: 100%; justify-content: space-between; }
   .sync-indicator time { display: none; }
-  .queue-summary { gap: .4rem; }
-  .queue-metric { grid-template-columns: 1fr; gap: .42rem; align-content: start; padding: .62rem .48rem; font-size: .75rem; }
-  .queue-metric-icon { width: 27px; height: 27px; }
-  .queue-metric strong { font-size: 1.15rem; }
-  .queue-empty .text-button { margin-inline-start: 0; }
   .archive-toolbar { padding: .7rem; }
   .archive-toolbar .search { flex: 1 0 100%; max-width: none; }
   .archive-count { font-size: .78rem; }

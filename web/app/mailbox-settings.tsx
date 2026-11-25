@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircleOutlined, MailOutlined, ReloadOutlined } from "@ant-design/icons";
+import { CheckCircleOutlined, HistoryOutlined, MailOutlined, ReloadOutlined } from "@ant-design/icons";
 import { type FormEvent, useEffect, useState } from "react";
 import { messageOf, relayRequest } from "./relay-api";
 import { WorkbenchSelect } from "./workbench-select";
@@ -221,11 +221,11 @@ export function MailboxSettings({ onChanged }: { onChanged: () => void }) {
         <p className="field-hint">测试连接只读打开指定文件夹。保存新的配置会暂停采集，重新测试后可启用。</p>
         {!loaded && pending === null && <button type="button" className="button" onClick={() => void refresh()}><ReloadOutlined aria-hidden="true" /> 重新读取配置</button>}
         <fieldset className="mailbox-fields" disabled={!loaded || pending !== null}>
-          <label className="wide-field">邮箱地址
+          <label>邮箱地址
             <input type="email" autoComplete="off" value={mailbox.address} required maxLength={254}
               placeholder="edi@company.com 或 name@163.com" onChange={(event) => editAddress(event.target.value)} />
           </label>
-          <label className="wide-field">邮箱授权码
+          <label>邮箱授权码
             <input type="password" autoComplete="new-password" value={password} maxLength={512}
               required={!canKeepPassword}
               placeholder={canKeepPassword ? "留空保留已保存的授权码" : "输入客户端授权码"}
@@ -257,13 +257,25 @@ export function MailboxSettings({ onChanged }: { onChanged: () => void }) {
           </button>
         </div>
       </form>
-      <section className="page-card mailbox-card">
-        <h2>最近一次同步</h2>
+      <section className="page-card mailbox-card" aria-labelledby="mailbox-sync-heading">
+        <h2 id="mailbox-sync-heading"><HistoryOutlined aria-hidden="true" /> 最近一次同步</h2>
         {mailbox.last_sync_at && mailbox.last_sync_result
-          ? <p className={`notice mailbox-notice ${mailbox.last_sync_result === "ok" ? "" : "failed"}`}>
-            {chinaTime.format(new Date(mailbox.last_sync_at))} · {syncMessages[mailbox.last_sync_result] ?? "同步暂不可用"}
-            {mailbox.last_sync_count !== null && ` · 检查 ${mailbox.last_sync_count} 封邮件`}
-          </p>
+          ? <>
+            <p className={`notice mailbox-notice ${mailbox.last_sync_result === "ok" ? "" : "failed"}`}>
+              {mailbox.last_sync_result === "ok" && <CheckCircleOutlined aria-hidden="true" />}
+              {syncMessages[mailbox.last_sync_result] ?? "同步暂不可用"}
+            </p>
+            <dl className="mailbox-sync-details">
+              <div>
+                <dt>同步时间</dt>
+                <dd><time dateTime={mailbox.last_sync_at}>{chinaTime.format(new Date(mailbox.last_sync_at))}</time></dd>
+              </div>
+              {mailbox.last_sync_count !== null && <div>
+                <dt>检查邮件</dt>
+                <dd>{mailbox.last_sync_count} 封</dd>
+              </div>}
+            </dl>
+          </>
           : <p className="field-hint">暂无同步记录。</p>}
       </section>
     </div>

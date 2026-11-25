@@ -125,7 +125,13 @@ tr:last-child td { border-bottom: 0; }
 
 .page-card { margin-top: 1.25rem; padding: 1rem; }
 
-.mailbox-card { max-width: 700px; padding: 1.2rem; }
+.mailbox-settings {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 1rem;
+}
+.mailbox-settings > .mailbox-card { min-width: 0; margin: 0; padding: clamp(1rem, 2vw, 1.4rem); }
 .mailbox-card h2 { display: flex; align-items: center; gap: .5rem; font-size: 1.05rem; font-weight: 680; }
 .mailbox-card h2 .anticon { color: var(--blue-dark); }
 .mailbox-card > .field-hint { margin-top: .55rem; }
@@ -154,13 +160,19 @@ tr:last-child td { border-bottom: 0; }
   font: inherit;
 }
 .mailbox-card label > input[readonly] { background: var(--surface); color: var(--secondary); }
-.wide-field { grid-column: 1 / -1; }
 .field-hint { color: var(--muted); font-size: .8125rem; line-height: 1.55; }
 .mailbox-notice { margin: .8rem 0 0; }
+.mailbox-sync-details { display: grid; gap: .6rem; margin: .85rem 0 0; font-size: .84rem; }
+.mailbox-sync-details > div { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .25rem .75rem; }
+.mailbox-sync-details dt { color: var(--muted); }
+.mailbox-sync-details dd { margin: 0; font-variant-numeric: tabular-nums; }
 .mailbox-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .55rem; margin-top: 1rem; }
 .primary-button { border-color: var(--blue); background: var(--blue); color: white; }
 .primary-button:hover { border-color: var(--blue-dark); background: var(--blue-dark); }
-@media (max-width: 460px) { .mailbox-fields { grid-template-columns: minmax(0, 1fr); } }
+@media (min-width: 1160px) {
+  .mailbox-settings { grid-template-columns: minmax(36rem, 2fr) minmax(17rem, 1fr); }
+}
+@media (max-width: 560px) { .mailbox-fields { grid-template-columns: minmax(0, 1fr); } }
 
 .auth-layout {
   display: grid;

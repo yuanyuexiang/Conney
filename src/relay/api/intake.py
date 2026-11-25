@@ -13,7 +13,9 @@ from relay.storage.archive import archive_from_environment
 router = APIRouter(prefix="/api/v1/intake", tags=["intake"])
 
 MailState = Literal["failed", "review", "queued", "complete", "archived"]
-MailFilter = Literal["all", "actionable", "failed", "review", "queued", "complete", "archived"]
+MailFilter = Literal[
+    "all", "actionable", "follow_up", "failed", "review", "queued", "complete", "archived"
+]
 
 
 class MailSummary(BaseModel):
@@ -160,6 +162,8 @@ def emails(
         )
     if state == "actionable":
         filters.append(f"summary.state IN {_ACTIONABLE_STATES}")
+    elif state == "follow_up":
+        filters.append("summary.state IN ('failed', 'review')")
     elif state != "all":
         filters.append("summary.state = :state")
     query = text(

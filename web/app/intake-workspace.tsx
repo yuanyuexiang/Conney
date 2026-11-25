@@ -1,8 +1,8 @@
 "use client";
 
 import {
-  ArrowLeftOutlined, ArrowRightOutlined, CheckOutlined, ClockCircleOutlined, CloudDownloadOutlined,
-  DatabaseOutlined, DownloadOutlined, ExclamationCircleOutlined, FileExcelOutlined, FileSearchOutlined,
+  ArrowLeftOutlined, ArrowRightOutlined, CheckOutlined, CloudDownloadOutlined,
+  DatabaseOutlined, DownloadOutlined, FileExcelOutlined,
   LinkOutlined, MailOutlined, ReloadOutlined, SearchOutlined,
 } from "@ant-design/icons";
 import { useEffect, useState } from "react";
@@ -12,8 +12,7 @@ import { WorkbenchSelect } from "./workbench-select";
 import { chinaTime, formatSyncTime, type IntakeCounts, type MailboxStatus, type SyncView } from "./workbench-status";
 
 type MailState = "failed" | "review" | "queued" | "complete" | "archived";
-type MailFilter = MailState | "all" | "actionable";
-export type QueueFilter = Extract<MailState, "failed" | "review" | "queued">;
+export type MailFilter = MailState | "all" | "follow_up";
 export type Mail = {
   id: number;
   sender: string;
@@ -87,21 +86,14 @@ const statusLabels: Record<MailState, string> = {
   failed: "有异常", review: "待核对", queued: "解析排队中", complete: "解析完成", archived: "已归档",
 };
 
-const queueFilters = [
-  { id: "failed", label: "采集与解析异常", icon: ExclamationCircleOutlined },
-  { id: "review", label: "待人工核对", icon: FileSearchOutlined },
-  { id: "queued", label: "解析队列", icon: ClockCircleOutlined },
-] as const;
-
-type ArchiveFilterOption = { value: Exclude<MailFilter, "actionable">; label: string };
-
-const archiveFilters: ArchiveFilterOption[] = [
+const archiveFilters: { value: MailFilter; label: string }[] = [
   { value: "all", label: "全部状态" },
-  { value: "complete", label: statusLabels.complete },
-  { value: "archived", label: "仅归档" },
+  { value: "follow_up", label: "待跟进邮件" },
   { value: "failed", label: statusLabels.failed },
   { value: "review", label: statusLabels.review },
-  { value: "queued", label: "排队中" },
+  { value: "queued", label: "解析中" },
+  { value: "complete", label: statusLabels.complete },
+  { value: "archived", label: "仅归档" },
 ];
 
 const MAIL_PAGE_SIZE = 30;
@@ -244,8 +236,8 @@ function Diagnosis({ attachment }: { attachment: Attachment }) {
   );
 }
 
-function MailDetail({ mail, refreshKey, onBack, archive, onDraftOpened }: {
-  mail: Mail; refreshKey: string; onBack: () => void; archive: boolean;
+function MailDetail({ mail, refreshKey, onDraftOpened }: {
+  mail: Mail; refreshKey: string;
   onDraftOpened?: (id: number) => void;
 }) {
   const [detail, setDetail] = useState<Detail>();
@@ -301,7 +293,6 @@ function MailDetail({ mail, refreshKey, onBack, archive, onDraftOpened }: {
   return (
     <section className="mail-detail" aria-label="邮件详情">
       <div className="detail-header intake-detail-header">
-        {!archive && <button type="button" className="back-button" onClick={onBack}><ArrowLeftOutlined aria-hidden="true" /> 返回列表</button>}
         <div className="detail-title"><h2>{visible.subject || "无主题"}</h2><Status state={visible.state} /></div>
         <p className="mail-meta">
           <span>{visible.sender || "未知发件人"}</span>
@@ -368,7 +359,7 @@ function ConnectMailbox({ sync, onConfigure }: { sync: SyncView; onConfigure?: (
       <section className="onboarding-main">
         <div className="empty-mark"><MailOutlined aria-hidden="true" /></div>
         <h2>{onConfigure ? (step === 0 ? "接入业务邮箱" : "完成邮箱接入") : "等待管理员接入业务邮箱"}</h2>
-        <p>启用采集后，异常邮件和需要核对的交付记录会进入待处理队列。</p>
+        <p>启用采集后，可在这里查阅邮件、附件和解析结果。</p>
         {onConfigure && <button type="button" className="button primary-button" onClick={onConfigure}>
           {step === 0 ? "配置邮箱" : "继续配置"} <ArrowRightOutlined aria-hidden="true" />
         </button>}
@@ -421,43 +412,20 @@ function ArchiveTable({ messages, emptyState, onSelect }: {
   );
 }
 
-function QueueEmpty({ filter, query, sync, mailbox, onViewArchive }: {
-  filter: MailFilter; query: string; sync: SyncView; mailbox: MailboxStatus | null | undefined; onViewArchive: () => void;
-}) {
+function ArchiveEmpty({ filter, query, sync }: { filter: MailFilter; query: string; sync: SyncView }) {
   const titles: Partial<Record<MailFilter, string>> = {
-    failed: "没有采集或解析异常", review: "没有待人工核对的邮件", queued: "解析队列为空",
+    all: "暂无归档邮件", follow_up: "没有待跟进邮件", failed: "没有采集或解析异常",
+    review: "没有待人工核对的邮件", queued: "解析队列为空",
   };
-  let title = titles[filter] ?? "当前没有待处理邮件";
-  let description = "新产生的异常和待核对记录会进入队列。";
-  if (sync.kind === "synced" && mailbox?.last_sync_at) {
-    description = `上次同步于 ${formatSyncTime(mailbox.last_sync_at)} 完成。`;
-  }
-  if (sync.kind === "waiting") {
-    title = "等待首次同步";
-    description = "采集已启动，首批邮件到达后会更新队列。";
-  }
-  if (query) {
-    title = "没有匹配的待处理邮件";
-    description = "试试其他关键词，或切换到全部待处理。";
-  }
-  const Icon = query ? SearchOutlined : sync.kind === "waiting" ? ClockCircleOutlined : CheckOutlined;
-  return (
-    <div className="queue-empty">
-      <span className="empty-mark"><Icon aria-hidden="true" /></span>
-      <div><h3>{title}</h3><p>{description}</p></div>
-      {!query && <button type="button" className="text-button" onClick={onViewArchive}>查看收件档案 <ArrowRightOutlined aria-hidden="true" /></button>}
-    </div>
-  );
-}
-
-function ArchiveEmpty({ filtered, sync }: { filtered: boolean; sync: SyncView }) {
+  const filtered = filter !== "all" || query !== "";
+  const title = (!query && titles[filter]) || "未找到匹配的归档邮件";
   let description = "邮件归档后，可以在这里查阅附件和解析记录。";
   if (sync.kind === "setup") description = "业务邮箱接入后，归档邮件会出现在这里。";
   if (sync.kind === "waiting") description = "采集已启动，正在等待首批邮件。";
   return (
     <div className="archive-empty">
       <DatabaseOutlined aria-hidden="true" />
-      <h2>{filtered ? "未找到匹配的归档邮件" : "暂无归档邮件"}</h2>
+      <h2>{title}</h2>
       <p>{filtered ? "调整关键词或处理状态后再试。" : description}</p>
     </div>
   );
@@ -473,25 +441,20 @@ function MailSearch({ value, onChange }: { value: string; onChange: (value: stri
   );
 }
 
-export function IntakeWorkspace({ heading, view, counts, mailbox, sync, revision, refresh, onConfigure, onViewArchive,
-  onDraftOpened, onReviewDelivery, initialMailId, initialQueueFilter }: {
+export function IntakeWorkspace({ heading, counts, mailbox, sync, revision, refresh, onConfigure,
+  onDraftOpened, initialMailId, initialFilter }: {
   heading: WorkbenchHeading;
-  view: "queue" | "archive";
   counts: IntakeCounts | undefined;
   mailbox: MailboxStatus | null | undefined;
   sync: SyncView;
   revision: number;
   refresh: () => void;
   onConfigure?: () => void;
-  onViewArchive: () => void;
   onDraftOpened?: (id: number) => void;
-  onReviewDelivery?: () => void;
   initialMailId?: number;
-  initialQueueFilter?: QueueFilter;
+  initialFilter: MailFilter;
 }) {
-  const archive = view === "archive";
-  const defaultState = archive ? "all" : "actionable";
-  const [filter, setFilter] = useState<MailFilter>(archive ? defaultState : initialQueueFilter ?? defaultState);
+  const [filter, setFilter] = useState(initialFilter);
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState<MailPage>();
@@ -505,13 +468,13 @@ export function IntakeWorkspace({ heading, view, counts, mailbox, sync, revision
   const requestKey = JSON.stringify([listKey, refreshKey]);
 
   useEffect(() => {
-    if (!archive || initialMailId === undefined) return;
+    if (initialMailId === undefined) return;
     const controller = new AbortController();
     intake.detail(initialMailId, controller.signal)
       .then((detail) => { if (!controller.signal.aborted) setSelection(detail.mail); })
       .catch((reason) => { if (!controller.signal.aborted) setLinkedMailError(messageOf(reason)); });
     return () => controller.abort();
-  }, [archive, initialMailId]);
+  }, [initialMailId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setQuery(search.trim()), 260);
@@ -537,9 +500,8 @@ export function IntakeWorkspace({ heading, view, counts, mailbox, sync, revision
   const error = listError?.key === requestKey ? listError.message : "";
   const waiting = current?.fetchedFor !== requestKey && !error;
   const rows = current?.rows ?? [];
-  const selected = archive ? selection : rows.find((mail) => mail.id === selection?.id) ?? rows[0];
-  const filtered = query !== "" || filter !== defaultState;
-  const onboarding = !archive && !error && !filtered && counts?.total === 0 && ["setup", "test", "stopped"].includes(sync.kind);
+  const filtered = query !== "" || filter !== "all";
+  const onboarding = !error && !filtered && counts?.total === 0 && ["setup", "test", "stopped"].includes(sync.kind);
   const issue = sync.kind === "failed" || sync.kind === "folder" || sync.tone === "unavailable";
 
   function chooseFilter(state: MailFilter) {
@@ -582,112 +544,49 @@ export function IntakeWorkspace({ heading, view, counts, mailbox, sync, revision
   </button>;
   const errorNotice = error && <p className="notice failed" role="alert">{error}</p>;
 
-  if (archive) {
-    const countLabel = !filtered && counts
-      ? `已归档 ${counts.total} 封`
-      : current && !waiting && !error
-        ? `${current.more ? "已显示" : "匹配"} ${rows.length} 封`
-        : "";
-    const tableMessage = rows.length === 0 && (waiting
-      ? <p className="empty" role="status">正在读取归档邮件…</p>
-      : error ? <p className="empty">档案读取失败，可刷新后重试。</p> : <ArchiveEmpty filtered={filtered} sync={sync} />);
-    return (
-      <main className="workbench archive-page">
-        <WorkbenchHeader {...heading} actions={refreshButton} />
-        {errorNotice}
-        {linkedMailError && <p className="notice failed" role="alert">{linkedMailError}</p>}
-        {selected ? <>
-          <button type="button" className="text-button archive-back" onClick={() => setSelection(undefined)}>
-            <ArrowLeftOutlined aria-hidden="true" /> 返回档案
-          </button>
-          <div className="archive-detail">
-            <MailDetail key={selected.id} mail={selected} refreshKey={refreshKey} archive
-              onBack={() => setSelection(undefined)} onDraftOpened={onDraftOpened} />
-          </div>
-        </> : (
-          <section className="archive-surface" aria-label="归档邮件查询">
-            <div className="archive-toolbar">
-              <MailSearch value={search} onChange={updateSearch} />
-              <WorkbenchSelect<MailFilter> label="处理状态" filter active={filter !== "all"} value={filter}
-                popupMatchSelectWidth={188} options={archiveFilters} onChange={chooseFilter}
-                optionRender={({ data }) => <span className="archive-filter-option">
-                  <span className={`archive-filter-dot ${data.value}`} aria-hidden="true" />
-                  {data.label}
-                </span>}
-              />
-              <span className="archive-count" role="status">{countLabel}</span>
-            </div>
-            <ArchiveTable messages={rows} emptyState={tableMessage} onSelect={setSelection} />
-            {pager}
-          </section>
-        )}
-      </main>
-    );
-  }
-
-  const activeQueue = queueFilters.find(({ id }) => id === filter);
-  const queueHeading = <div className="queue-list-header">
-    <div className="queue-list-heading">
-      <h2>{activeQueue?.label ?? "全部待处理"}</h2>
-      {activeQueue ? (
-        <button type="button" className="text-button" onClick={() => chooseFilter("actionable")}>查看全部</button>
-      ) : current && rows.length > 0 && <span>已显示 {rows.length} 封</span>}
-    </div>
-    <MailSearch value={search} onChange={updateSearch} />
-  </div>;
+  const countLabel = !filtered && counts
+    ? `已归档 ${counts.total} 封`
+    : current && !waiting && !error
+      ? `${current.more ? "已显示" : "匹配"} ${rows.length} 封`
+      : "";
+  const tableMessage = rows.length === 0 && (waiting
+    ? <p className="empty" role="status">正在读取归档邮件…</p>
+    : error ? <p className="empty">档案读取失败，可刷新后重试。</p> : <ArchiveEmpty filter={filter} query={query} sync={sync} />);
 
   return (
-    <main className="workbench queue-page">
-      <WorkbenchHeader {...heading} actions={<>
-        {onReviewDelivery && <button className="button" type="button" onClick={onReviewDelivery}>交付待核对</button>}
-        {refreshButton}
-      </>} />
+    <main className="workbench archive-page">
+      <WorkbenchHeader {...heading} actions={refreshButton} />
       {issue && <div className="notice failed sync-notice" role="status">
         <span>{sync.kind === "folder" ? "文件夹标识发生变化，采集已暂停。" : sync.kind === "failed" ? "上次邮箱同步失败，可继续查看已归档邮件。" : "暂时无法读取邮箱同步状态。"}</span>
         {onConfigure && sync.kind !== "unknown" && <button type="button" className="text-button" onClick={onConfigure}>
           查看邮箱配置 <ArrowRightOutlined aria-hidden="true" />
-        </button>
-        }
+        </button>}
       </div>}
       {errorNotice}
-
-      {onboarding ? <ConnectMailbox sync={sync} onConfigure={onConfigure} /> : (
-        <>
-          <div className="queue-summary" role="group" aria-label="待处理状态">
-            {queueFilters.map(({ id, label, icon: Icon }) => (
-              <button type="button" className={`queue-metric ${id}`} key={id} aria-pressed={filter === id}
-                onClick={() => chooseFilter(filter === id ? "actionable" : id)}>
-                <span className="queue-metric-icon"><Icon aria-hidden="true" /></span>
-                <span>{label}</span>
-                <strong>{counts?.[id] ?? "—"}</strong>
-              </button>
-            ))}
+      {linkedMailError && <p className="notice failed" role="alert">{linkedMailError}</p>}
+      {selection ? <>
+        <button type="button" className="text-button archive-back" onClick={() => setSelection(undefined)}>
+          <ArrowLeftOutlined aria-hidden="true" /> 返回档案
+        </button>
+        <div className="archive-detail">
+          <MailDetail key={selection.id} mail={selection} refreshKey={refreshKey} onDraftOpened={onDraftOpened} />
+        </div>
+      </> : onboarding ? <ConnectMailbox sync={sync} onConfigure={onConfigure} /> : (
+        <section className="archive-surface" aria-label="归档邮件查询">
+          <div className="archive-toolbar">
+            <MailSearch value={search} onChange={updateSearch} />
+            <WorkbenchSelect<MailFilter> label="处理状态" filter active={filter !== "all"} value={filter}
+              popupMatchSelectWidth={188} options={archiveFilters} onChange={chooseFilter}
+              optionRender={({ data }) => <span className="archive-filter-option">
+                <span className={`archive-filter-dot ${data.value}`} aria-hidden="true" />
+                {data.label}
+              </span>}
+            />
+            <span className="archive-count" role="status">{countLabel}</span>
           </div>
-          <div className={`workspace queue-layout ${selected ? (selection ? "detail-open" : "") : "queue-idle"}`}>
-            <aside className="mail-list" aria-label="待处理邮件">
-              {queueHeading}
-              <div className="mail-items">
-                {rows.map((mail) => (
-                  <button type="button" key={mail.id} className={`mail-item ${mail.id === selected?.id ? "selected" : ""}`}
-                    aria-pressed={mail.id === selected?.id} onClick={() => setSelection(mail)}>
-                    <span className="mail-subject">{mail.subject || "无主题"}</span>
-                    <span className="mail-sender">{mail.sender || "未知发件人"}</span>
-                    <span className="mail-item-bottom">
-                      <Status state={mail.state} />
-                      <time dateTime={mail.received_at}>{formatSyncTime(mail.received_at)}</time>
-                    </span>
-                  </button>
-                ))}
-                {pager}
-                {!selected && waiting && <p className="empty" role="status">正在读取待处理邮件…</p>}
-                {!selected && current && !waiting && !error && <QueueEmpty filter={filter} query={query} sync={sync}
-                  mailbox={mailbox} onViewArchive={onViewArchive} />}
-              </div>
-            </aside>
-            {selected && <MailDetail key={selected.id} mail={selected} refreshKey={refreshKey} archive={false}
-              onBack={() => setSelection(undefined)} onDraftOpened={onDraftOpened} />}
-          </div>
-        </>
+          <ArchiveTable messages={rows} emptyState={tableMessage} onSelect={setSelection} />
+          {pager}
+        </section>
       )}
     </main>
   );

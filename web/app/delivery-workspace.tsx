@@ -2,7 +2,6 @@
 
 import {
   ArrowLeftOutlined, DownloadOutlined, FileExcelOutlined, ReloadOutlined,
-  UnorderedListOutlined,
 } from "@ant-design/icons";
 import { Drawer, type RefSelectProps } from "antd";
 import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
@@ -373,24 +372,24 @@ function DeliveryDetail({ id, admin, review, onChange, onBack, onArchive }: {
   );
 }
 
-export function DeliveryWorkspace({ heading, admin, draftId, onSelect, review = false, onArchive, onQueue }: {
+export function DeliveryWorkspace({ heading, admin, draftId, onSelect, initialReview = false, onArchive }: {
   heading: WorkbenchHeading;
   admin: boolean;
   draftId: number | undefined;
   onSelect: (id: number | undefined) => void;
-  review?: boolean;
+  initialReview?: boolean;
   onArchive: (mailId: number) => void;
-  onQueue: () => void;
 }) {
   const [rows, setRows] = useState<Summary[]>();
-  const [status, setStatus] = useState<"all" | "review">("all");
+  const [status, setStatus] = useState<"all" | "review">(initialReview ? "review" : "all");
   const [search, setSearch] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [error, setError] = useState("");
   const [more, setMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [refresh, setRefresh] = useState(0);
-  const query = `/delivery?${new URLSearchParams({ review: String(review || status === "review"), q: searchQuery })}`;
+  const forReview = status === "review";
+  const query = `/delivery?${new URLSearchParams({ review: String(forReview), q: searchQuery })}`;
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setSearchQuery(search.trim()), 220);
@@ -427,18 +426,23 @@ export function DeliveryWorkspace({ heading, admin, draftId, onSelect, review = 
 
   return (
     <main className={`workbench delivery-workbench ${draftId !== undefined ? "batch-open" : ""}`}>
-      <WorkbenchHeader {...heading} actions={review && <button className="button" type="button" onClick={onQueue}>
-        <UnorderedListOutlined aria-hidden="true" /> 邮件待处理
-      </button>} />
+      <WorkbenchHeader {...heading} />
       <div className="delivery-columns">
         <aside className="delivery-batch-list" aria-label="交付批次">
           <div className="delivery-batch-filters">
             <h2>交付批次</h2>
             <input value={search} aria-label="搜索交付批次" placeholder="搜索报文或附件" maxLength={120}
               onChange={(event) => setSearch(event.target.value)} />
-            {!review && <WorkbenchSelect label="按核对状态筛选" filter active={status === "review"} value={status}
+            <WorkbenchSelect label="按核对状态筛选" filter active={forReview} value={status}
               options={[{ value: "all", label: "全部状态" }, { value: "review", label: "待核对" }]}
-              onChange={(value) => { setRows(undefined); setStatus(value); }} />}
+              onChange={(value) => {
+                if (value === status) return;
+                setRows(undefined);
+                setMore(false);
+                setError("");
+                setStatus(value);
+                onSelect(undefined);
+              }} />
           </div>
           {error && <p className="notice failed" role="alert">{error}</p>}
           {rows?.map((row) => {
@@ -456,7 +460,7 @@ export function DeliveryWorkspace({ heading, admin, draftId, onSelect, review = 
           {!error && !rows?.length && <p className="empty">{rows ? "没有符合条件的交付批次" : "正在读取批次…"}</p>}
         </aside>
         {draftId !== undefined ?
-          <DeliveryDetail key={draftId} id={draftId} admin={admin} review={review} onChange={() => setRefresh((value) => value + 1)}
+          <DeliveryDetail key={draftId} id={draftId} admin={admin} review={forReview} onChange={() => setRefresh((value) => value + 1)}
             onArchive={onArchive} onBack={() => onSelect(undefined)} />
           : <section className="delivery-empty">
             <FileExcelOutlined aria-hidden="true" />

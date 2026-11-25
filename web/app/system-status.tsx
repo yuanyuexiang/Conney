@@ -97,9 +97,9 @@ function parsingBadge(parsing: Parsing | undefined): Badge {
   return { tone: "ready", label: "队列空闲" };
 }
 
-export function SystemStatus({ heading, onConfigure, onViewQueue }: {
+export function SystemStatus({ heading, onConfigure, onViewParsingMail }: {
   heading: WorkbenchHeading;
-  onConfigure?: () => void; onViewQueue: () => void;
+  onConfigure?: () => void; onViewParsingMail: () => void;
 }) {
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [checking, setChecking] = useState(true);
@@ -223,8 +223,8 @@ export function SystemStatus({ heading, onConfigure, onViewQueue }: {
               </dl>
               <p>最近解析成功 {parsing.last_success_at ? <Timestamp value={parsing.last_success_at} /> : "暂无记录"}</p>
             </>}
-            <button type="button" className="text-button operation-link" onClick={onViewQueue}>
-              查看待处理 <ArrowRightOutlined aria-hidden="true" />
+            <button type="button" className="text-button operation-link" onClick={onViewParsingMail}>
+              查看解析中的邮件 <ArrowRightOutlined aria-hidden="true" />
             </button>
           </StatusCard>
         </div>

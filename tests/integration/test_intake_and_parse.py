@@ -205,6 +205,8 @@ def test_workbench_classifies_real_jobs_and_preserves_source_coordinates(
         failure_id = receive_schedule(24, "Workbench error", "bad")
         pending = client.get(base + "/emails", params={"state": "queued", "q": "4905.xlsx"})
         assert [row["id"] for row in pending.json()] == [failure_id, review_id]
+        follow_up = {"state": "follow_up", "q": "WORKBENCH"}
+        assert client.get(base + "/emails", params=follow_up).json() == []
         assert process_one(archive) and process_one(archive)
         counts = client.get(base + "/counts").json()
         assert counts == {
@@ -213,6 +215,10 @@ def test_workbench_classifies_real_jobs_and_preserves_source_coordinates(
             "review": before["review"] + 1,
             "queued": before["queued"],
         }
+        assert [row["id"] for row in client.get(base + "/emails", params=follow_up).json()] == [
+            failure_id,
+            review_id,
+        ]
         assert (
             client.get(
                 base + "/emails",

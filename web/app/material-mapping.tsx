@@ -2,7 +2,7 @@
 
 import { DownOutlined, FileExcelOutlined, PlusOutlined, SearchOutlined, TagsOutlined } from "@ant-design/icons";
 import { Modal } from "antd";
-import { type FormEvent, useEffect, useId, useState } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import {
   customerLabels, type Customer, type MappingValues, type MaterialCandidate, type MaterialMapping,
 } from "./delivery-api";
@@ -160,6 +160,11 @@ export function MaterialMappingPage() {
   const [failure, setFailure] = useState<{ key: string; message: string }>();
   const [saved, setSaved] = useState("");
   const [editing, setEditing] = useState<MappingRow | "new">();
+  const [removing, setRemoving] = useState<MappingRow>();
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const deleteTrigger = useRef<HTMLButtonElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
   const [loadingPage, setLoadingPage] = useState<string>();
   const [query, setQuery] = useState("");
   const params = new URLSearchParams({ q: query, ...(customer ? { customer } : {}) }).toString();
@@ -171,6 +176,7 @@ export function MaterialMappingPage() {
   const hasMore = result?.key === key && result.hasMore;
   const loadingMore = loadingPage === key;
   const error = failure?.key === key ? failure.message : "";
+  const deletingMapping = removing && "internal_item" in removing;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -203,6 +209,26 @@ export function MaterialMappingPage() {
     }
   }
 
+  async function remove() {
+    if (!removing || deleting) return;
+    setDeleting(true);
+    setDeleteError("");
+    const path = "revision" in removing
+      ? `/material-mappings/${removing.id}?revision=${removing.revision}`
+      : `/material-mappings/candidates/${removing.id}`;
+    try {
+      await relayRequest<void>(path, { method: "DELETE" });
+      setSaved(`已删除 ${removing.customer_item} 的${deletingMapping ? "物料映射" : "待匹配记录"}。`);
+      setRevision((value) => value + 1);
+      setRemoving(undefined);
+    } catch (reason) {
+      setDeleteError(messageOf(reason));
+      setRevision((value) => value + 1);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <section className="page-card mapping-card" aria-label="物料匹配列表">
       <div className="mapping-list-heading">
@@ -215,7 +241,7 @@ export function MaterialMappingPage() {
       <div className="delivery-toolbar">
         <form className="delivery-filters" onSubmit={(event) => { event.preventDefault(); setQuery(q.trim()); }}>
           <label className="sr-only" htmlFor="mapping-search">搜索料号或订单</label>
-          <input id="mapping-search" value={q} onChange={(event) => setQ(event.target.value)} maxLength={120}
+          <input ref={searchInput} id="mapping-search" value={q} onChange={(event) => setQ(event.target.value)} maxLength={120}
             placeholder="搜索料号或订单" />
           <button className="button" type="submit" aria-label="搜索"><SearchOutlined aria-hidden="true" /></button>
           <WorkbenchSelect label="按客户筛选" filter active={customer !== ""} value={customer}
@@ -237,9 +263,21 @@ export function MaterialMappingPage() {
             <td>{"internal_item" in row ? <strong>{row.internal_item}</strong> :
               <span className="mapping-source-file" title={row.source_filename}>{row.source_filename}<small>{row.source_cell}</small></span>}</td>
             <td>{row.order_no || "—"}</td><td>{row.order_line || "—"} / {row.ship_to || "—"}</td><td>{row.supplier_item || "—"}</td>
-            <td><button type="button" className="text-button mapping-row-action" onClick={() => { setSaved(""); setEditing(row); }}>
-              {pending ? "补录康尼料号" : "编辑"}
-            </button></td>
+            <td>
+              <div className="mapping-row-actions">
+                <button type="button" className="text-button" onClick={() => { setSaved(""); setEditing(row); }}>
+                  {pending ? "补录康尼料号" : "编辑"}
+                </button>
+                <button type="button" className="text-button mapping-delete-button" aria-haspopup="dialog"
+                  aria-label={`删除物料 ${row.customer_item}${row.order_no ? `，订单 ${row.order_no}` : ""}`}
+                  onClick={(event) => {
+                    deleteTrigger.current = event.currentTarget;
+                    setSaved("");
+                    setDeleteError("");
+                    setRemoving(row);
+                  }}>删除</button>
+              </div>
+            </td>
           </tr>)}</tbody></table>
         </div>
       ) : !error && <p className="empty" role="status">
@@ -256,6 +294,29 @@ export function MaterialMappingPage() {
           setSaved(`已保存 ${mapping.customer_item} → ${mapping.internal_item}`);
           setEditing(undefined);
         }} />}
+      <Modal title={deletingMapping ? "删除物料映射" : "删除待匹配记录"}
+        open={removing !== undefined} width={440} centered
+        okText="确认删除" cancelText="取消" okButtonProps={{ danger: true }}
+        cancelButtonProps={{ disabled: deleting, autoFocus: true }}
+        confirmLoading={deleting} keyboard={!deleting}
+        closable={deleting ? false : { "aria-label": "关闭删除确认" }}
+        mask={{ closable: false }} onOk={() => void remove()}
+        focusable={{ trap: true, focusTriggerAfterClose: false }}
+        onCancel={() => { if (!deleting) setRemoving(undefined); }}
+        afterClose={() => {
+          (deleteTrigger.current?.isConnected ? deleteTrigger.current : searchInput.current)?.focus();
+        }}>
+        {removing && <div className="mapping-delete-copy">
+          <p>
+            {customerLabels[removing.customer]} · 客户料号 <strong>{removing.customer_item}</strong>
+            {removing.order_no && <> · 采购订单 <strong>{removing.order_no}</strong></>}
+          </p>
+          <p>{"internal_item" in removing
+            ? <>删除对应康尼料号 <strong>{removing.internal_item}</strong> 的映射。已有交付草稿在「重新匹配」后会按剩余映射计算。</>
+            : "这条记录会从待匹配列表移除。再次导入原表时可能重新出现。"}</p>
+          {deleteError && <p className="notice failed" role="alert">{deleteError}</p>}
+        </div>}
+      </Modal>
     </section>
   );
 }

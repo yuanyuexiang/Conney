@@ -74,6 +74,16 @@ def test_imported_material_waits_for_confirmed_mapping(
         assert import_directory(tmp_path) == (2, {"zf": 1})
         assert admin.get(path).json() == candidates
 
+        candidate_url = f"/api/v1/material-mappings/candidates/{candidates[0]['id']}"
+        assert viewer.delete(candidate_url, headers=_BROWSER).status_code == 403
+        assert admin.delete(candidate_url).status_code == 403
+        assert admin.delete(candidate_url, headers=_BROWSER).status_code == 204
+        assert admin.delete(candidate_url, headers=_BROWSER).status_code == 204
+        assert admin.get(path).json() == []
+        assert import_directory(tmp_path) == (2, {"zf": 1})
+        (reimported,) = admin.get(path).json()
+        assert reimported["id"] != candidates[0]["id"]
+
         saved = admin.post(
             "/api/v1/material-mappings",
             headers=_BROWSER,
@@ -89,6 +99,15 @@ def test_imported_material_waits_for_confirmed_mapping(
         assert admin.get(path).json() == []
         mappings = admin.get(f"/api/v1/material-mappings?customer=zf&q={item}").json()
         assert [mapping["internal_item"] for mapping in mappings] == ["0000024"]
+        assert (
+            admin.delete(
+                f"/api/v1/material-mappings/{mappings[0]['id']}",
+                headers=_BROWSER,
+                params={"revision": mappings[0]["revision"]},
+            ).status_code
+            == 204
+        )
+        assert admin.get(path).json() == [reimported]
 
 
 def _remove_test_delivery(mail_id: int, item: str) -> None:
@@ -264,10 +283,34 @@ def test_delivery_draft_from_archive_to_generation(
         assert dashboard.status_code == 200
         assert dashboard.json()["parsed_today"] >= 1
         assert dashboard.json()["delivery_drafts"] == dashboard.json()["drafts_for_review"] == 1
+
+        mapping_detail = f"{mapping_url}/{saved.json()['id']}"
+        old_revision = {"revision": saved.json()["revision"]}
+        assert (
+            reader.delete(mapping_detail, params=old_revision, headers=_BROWSER).status_code == 403
+        )
+        assert client.delete(mapping_detail, params=old_revision).status_code == 403
+        edited = client.put(
+            mapping_detail, headers=_BROWSER, json={**mapping, **old_revision, "drawing": "D-1"}
+        )
+        assert edited.status_code == 200
+        assert (
+            client.delete(mapping_detail, params=old_revision, headers=_BROWSER).status_code == 409
+        )
+        revision = {"revision": edited.json()["revision"]}
+        assert client.delete(mapping_detail, params=revision, headers=_BROWSER).status_code == 204
+        assert client.delete(mapping_detail, params=revision, headers=_BROWSER).status_code == 204
+        assert client.get(mapping_url, params={"q": item}).json() == []
+        assert reader.get(draft_url).json() == sent.json()
+        rematched = client.post(f"{draft_url}/refresh", headers=_BROWSER, json={"revision": 3})
+        assert rematched.status_code == 200, rematched.text
+        assert rematched.json()["pending_mappings"] == 1
+        assert rematched.json()["materials"][0]["mapping"] is None
+        assert rematched.json()["materials"][0]["entries"] == sent.json()["materials"][0]["entries"]
         with TestClient(app) as manager:
             signed_in(manager, "admin")
             assert manager.delete(f"/api/v1/users/{owner.id}", headers=_BROWSER).status_code == 204
-        assert reader.get(draft_url).json() == sent.json()
+        assert reader.get(draft_url).json() == rematched.json()
         with get_engine().connect() as connection:
             assert (
                 connection.scalar(

@@ -121,7 +121,11 @@
 .mapping-card td { overflow-wrap: anywhere; }
 .mapping-source-file { display: block; max-width: 19rem; font-size: .8rem; }
 .mapping-source-file > small { display: block; margin-top: .2rem; }
-.mapping-row-action { white-space: nowrap; }
+.mapping-row-actions { display: flex; align-items: center; gap: .9rem; white-space: nowrap; }
+.mapping-row-actions .mapping-delete-button { color: #96342f; }
+.mapping-delete-copy { display: grid; gap: .6rem; color: var(--ink); overflow-wrap: anywhere; }
+.mapping-delete-copy p { margin: 0; }
+.mapping-delete-copy p:nth-child(2) { color: var(--muted); }
 .mapping-card .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 .ant-modal .mapping-modal-panel {

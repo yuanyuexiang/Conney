@@ -132,6 +132,16 @@ def list_material_candidates(
         return [MaterialCandidate.model_validate(row) for row in rows]
 
 
+@router.delete(
+    "/material-mappings/candidates/{candidate_id}", dependencies=_BROWSER, status_code=204
+)
+def delete_material_candidate(candidate_id: int, _: AdminUser) -> None:
+    with get_engine().begin() as connection:
+        connection.execute(
+            text("DELETE FROM material_candidates WHERE id = :id"), {"id": candidate_id}
+        )
+
+
 def _save_mapping(
     values: MappingValues, *, mapping_id: int | None = None, revision: int | None = None
 ) -> MaterialMapping:
@@ -177,6 +187,20 @@ def add_mapping(values: MappingValues, _: AdminUser) -> MaterialMapping:
 @router.put("/material-mappings/{mapping_id}", dependencies=_BROWSER)
 def edit_mapping(mapping_id: int, values: MappingEdit, _: AdminUser) -> MaterialMapping:
     return _save_mapping(values, mapping_id=mapping_id, revision=values.revision)
+
+
+@router.delete("/material-mappings/{mapping_id}", dependencies=_BROWSER, status_code=204)
+def delete_mapping(mapping_id: int, revision: Annotated[int, Query(ge=1)], _: AdminUser) -> None:
+    with get_engine().begin() as connection:
+        deleted = connection.execute(
+            text("DELETE FROM material_mappings WHERE id = :id AND revision = :revision"),
+            {"id": mapping_id, "revision": revision},
+        ).rowcount
+        if deleted == 0 and connection.scalar(
+            text("SELECT EXISTS (SELECT 1 FROM material_mappings WHERE id = :id)"),
+            {"id": mapping_id},
+        ):
+            raise HTTPException(409, detail="mapping_changed")
 
 
 def _snapshot(row: RowMapping) -> DeliveryDraft:

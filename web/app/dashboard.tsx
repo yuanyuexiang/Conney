@@ -5,7 +5,7 @@ import {
   FileExcelOutlined, FileSearchOutlined, InboxOutlined, MailOutlined, ReloadOutlined,
 } from "@ant-design/icons";
 import { type ReactNode, useEffect, useState } from "react";
-import { Status, type Mail, type QueueFilter } from "./intake-workspace";
+import { Status, type Mail, type MailFilter } from "./intake-workspace";
 import { messageOf, relayRequest } from "./relay-api";
 import { WorkbenchHeader, type WorkbenchHeading } from "./workbench-header";
 import { formatSyncTime, type IntakeCounts, type SyncView } from "./workbench-status";
@@ -78,17 +78,17 @@ function ReceiptTrend({ receipts, loading }: { receipts?: Receipt[]; loading: bo
   );
 }
 
-function FollowUp({ counts, drafts, sync, onQueue, onReview, onConfigure }: {
+function FollowUp({ counts, drafts, sync, onArchiveFilter, onReview, onConfigure }: {
   counts?: IntakeCounts;
   drafts?: number;
   sync: SyncView;
-  onQueue: (filter?: QueueFilter) => void;
+  onArchiveFilter: (filter: MailFilter) => void;
   onReview: () => void;
   onConfigure?: () => void;
 }) {
   const tasks = [
-    { label: "采集与解析异常", icon: ExclamationCircleOutlined, count: counts?.failed, tone: "red", action: () => onQueue("failed") },
-    { label: "邮件待人工核对", icon: FileSearchOutlined, count: counts?.review, tone: "amber", action: () => onQueue("review") },
+    { label: "采集与解析异常", icon: ExclamationCircleOutlined, count: counts?.failed, tone: "red", action: () => onArchiveFilter("failed") },
+    { label: "邮件待人工核对", icon: FileSearchOutlined, count: counts?.review, tone: "amber", action: () => onArchiveFilter("review") },
     { label: "交付草稿待核对", icon: FileExcelOutlined, count: drafts, tone: "blue", action: onReview },
   ];
   const configure = onConfigure && ["setup", "test", "stopped", "folder", "failed"].includes(sync.kind);
@@ -115,7 +115,7 @@ function FollowUp({ counts, drafts, sync, onQueue, onReview, onConfigure }: {
   );
 }
 
-export function Dashboard({ heading, counts, sync, syncAt, revision, onRefresh, onArchive, onMail, onQueue,
+export function Dashboard({ heading, counts, sync, syncAt, revision, onRefresh, onArchive, onMail, onArchiveFilter,
   onDelivery, onReview, onConfigure }: {
   heading: WorkbenchHeading;
   counts?: IntakeCounts;
@@ -125,7 +125,7 @@ export function Dashboard({ heading, counts, sync, syncAt, revision, onRefresh, 
   onRefresh: () => void;
   onArchive: () => void;
   onMail: (id: number) => void;
-  onQueue: (filter?: QueueFilter) => void;
+  onArchiveFilter: (filter: MailFilter) => void;
   onDelivery: () => void;
   onReview: () => void;
   onConfigure?: () => void;
@@ -163,7 +163,7 @@ export function Dashboard({ heading, counts, sync, syncAt, revision, onRefresh, 
 
   const received = data?.receipts.at(-1)?.received;
   const totalReceipts = data?.receipts.reduce((total, day) => total + day.received, 0);
-  const actionable = counts ? counts.failed + counts.review + counts.queued : undefined;
+  const actionable = counts ? counts.failed + counts.review : undefined;
   return (
     <main className="workbench">
       <WorkbenchHeader {...heading}
@@ -179,14 +179,14 @@ export function Dashboard({ heading, counts, sync, syncAt, revision, onRefresh, 
             hint={totalReceipts === undefined ? undefined : `近 7 天共 ${numbers.format(totalReceipts)} 封`} onClick={onArchive} />
           <Metric label="今日解析完成" value={data?.parsed_today} unit="份" tone="green" icon={<FileDoneOutlined aria-hidden="true" />}
             hint="按附件解析完成时间" onClick={onArchive} />
-          <Metric label="待处理邮件" value={actionable} unit="封" tone="amber" icon={<InboxOutlined aria-hidden="true" />}
-            hint={counts ? `其中 ${numbers.format(counts.queued)} 封在解析队列` : undefined} onClick={() => onQueue()} />
+          <Metric label="待跟进邮件" value={actionable} unit="封" tone="amber" icon={<InboxOutlined aria-hidden="true" />}
+            hint="采集与解析异常、待人工核对" onClick={() => onArchiveFilter("follow_up")} />
           <Metric label="交付草稿" value={data?.delivery_drafts} unit="批" tone="slate" icon={<FileExcelOutlined aria-hidden="true" />}
             hint={data && `${numbers.format(data.drafts_for_review)} 批待核对`} onClick={onDelivery} />
         </section>
         <div className="dashboard-overview">
           <ReceiptTrend receipts={data?.receipts} loading={loading} />
-          <FollowUp counts={counts} drafts={data?.drafts_for_review} sync={sync} onQueue={onQueue}
+          <FollowUp counts={counts} drafts={data?.drafts_for_review} sync={sync} onArchiveFilter={onArchiveFilter}
             onReview={onReview} onConfigure={onConfigure} />
         </div>
         <section className="dashboard-panel" aria-labelledby="recent-mail-heading">
