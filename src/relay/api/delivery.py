@@ -33,6 +33,9 @@ _BROWSER = [Depends(require_browser_request)]
 _REVISION = Annotated[int, Field(ge=1)]
 _MAPPING_FIELDS = ", ".join(MappingValues.model_fields)
 _MAPPING_COLUMNS = f"{_MAPPING_FIELDS}, order_key"
+DRAFT_REVIEW_PREDICATE = (
+    "((snapshot->>'pending_mappings')::integer > 0 OR (snapshot->>'pending_entries')::integer > 0)"
+)
 _ATTACHMENT = """
     SELECT run.id, run.source_fields, att.id AS attachment_id, att.mail_id, att.filename
     FROM parse_runs AS run
@@ -335,8 +338,7 @@ def list_drafts(
                 "WHERE (CAST(:before AS bigint) IS NULL OR run_id < :before) "
                 "AND (:q = '' OR strpos(lower(concat_ws(' ', snapshot->>'filename', "
                 "snapshot->>'document_no', '德科 DRX')), lower(:q)) > 0) "
-                "AND (NOT :review OR (snapshot->>'pending_mappings')::integer > 0 "
-                "OR (snapshot->>'pending_entries')::integer > 0) "
+                f"AND (NOT :review OR {DRAFT_REVIEW_PREDICATE}) "
                 "ORDER BY run_id DESC LIMIT 100"
             ),
             {"before": before, "review": review, "q": q.strip()},

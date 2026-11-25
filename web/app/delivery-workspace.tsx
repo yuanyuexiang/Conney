@@ -12,6 +12,7 @@ import {
 } from "./delivery-api";
 import { MappingDialog } from "./material-mapping";
 import { messageOf, relayRequest, RelayRequestError } from "./relay-api";
+import { WorkbenchHeader, type WorkbenchHeading } from "./workbench-header";
 import { WorkbenchSelect } from "./workbench-select";
 
 type GridMode = "demand" | "shipment";
@@ -372,7 +373,8 @@ function DeliveryDetail({ id, admin, review, onChange, onBack, onArchive }: {
   );
 }
 
-export function DeliveryWorkspace({ admin, draftId, onSelect, review = false, onArchive, onQueue }: {
+export function DeliveryWorkspace({ heading, admin, draftId, onSelect, review = false, onArchive, onQueue }: {
+  heading: WorkbenchHeading;
   admin: boolean;
   draftId: number | undefined;
   onSelect: (id: number | undefined) => void;
@@ -425,10 +427,9 @@ export function DeliveryWorkspace({ admin, draftId, onSelect, review = false, on
 
   return (
     <main className={`workbench delivery-workbench ${draftId !== undefined ? "batch-open" : ""}`}>
-      <div className="delivery-workbench-header">
-        <div><h1>{review ? "交付待核对" : "交付计划"}</h1><p>{review ? "处理物料匹配和交付记录中的待核对项。" : "按报文批次核对需求、发货安排和交付文件。"}</p></div>
-        {review && <button className="button" type="button" onClick={onQueue}><UnorderedListOutlined aria-hidden="true" /> 邮件待处理</button>}
-      </div>
+      <WorkbenchHeader {...heading} actions={review && <button className="button" type="button" onClick={onQueue}>
+        <UnorderedListOutlined aria-hidden="true" /> 邮件待处理
+      </button>} />
       <div className="delivery-columns">
         <aside className="delivery-batch-list" aria-label="交付批次">
           <div className="delivery-batch-filters">

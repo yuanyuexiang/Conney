@@ -7,12 +7,14 @@ import {
 } from "@ant-design/icons";
 import { useEffect, useState } from "react";
 import { messageOf, relayRequest } from "./relay-api";
+import { WorkbenchHeader, type WorkbenchHeading } from "./workbench-header";
 import { WorkbenchSelect } from "./workbench-select";
 import { chinaTime, formatSyncTime, type IntakeCounts, type MailboxStatus, type SyncView } from "./workbench-status";
 
 type MailState = "failed" | "review" | "queued" | "complete" | "archived";
 type MailFilter = MailState | "all" | "actionable";
-type Mail = {
+export type QueueFilter = Extract<MailState, "failed" | "review" | "queued">;
+export type Mail = {
   id: number;
   sender: string;
   subject: string;
@@ -117,7 +119,7 @@ const intake = {
   ),
 };
 
-function Status({ state, children }: { state: MailState; children?: string }) {
+export function Status({ state, children }: { state: MailState; children?: string }) {
   return <span className={`status ${state}`}>{children ?? statusLabels[state]}</span>;
 }
 
@@ -471,8 +473,9 @@ function MailSearch({ value, onChange }: { value: string; onChange: (value: stri
   );
 }
 
-export function IntakeWorkspace({ view, counts, mailbox, sync, revision, refresh, onConfigure, onViewArchive,
-  onDraftOpened, onReviewDelivery, initialMailId }: {
+export function IntakeWorkspace({ heading, view, counts, mailbox, sync, revision, refresh, onConfigure, onViewArchive,
+  onDraftOpened, onReviewDelivery, initialMailId, initialQueueFilter }: {
+  heading: WorkbenchHeading;
   view: "queue" | "archive";
   counts: IntakeCounts | undefined;
   mailbox: MailboxStatus | null | undefined;
@@ -484,10 +487,11 @@ export function IntakeWorkspace({ view, counts, mailbox, sync, revision, refresh
   onDraftOpened?: (id: number) => void;
   onReviewDelivery?: () => void;
   initialMailId?: number;
+  initialQueueFilter?: QueueFilter;
 }) {
   const archive = view === "archive";
   const defaultState = archive ? "all" : "actionable";
-  const [filter, setFilter] = useState<MailFilter>(defaultState);
+  const [filter, setFilter] = useState<MailFilter>(archive ? defaultState : initialQueueFilter ?? defaultState);
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState<MailPage>();
@@ -589,10 +593,7 @@ export function IntakeWorkspace({ view, counts, mailbox, sync, revision, refresh
       : error ? <p className="empty">档案读取失败，可刷新后重试。</p> : <ArchiveEmpty filtered={filtered} sync={sync} />);
     return (
       <main className="workbench archive-page">
-        <div className="workbench-heading">
-          <div className="archive-title"><DatabaseOutlined aria-hidden="true" /><h1>收件档案</h1></div>
-          {refreshButton}
-        </div>
+        <WorkbenchHeader {...heading} actions={refreshButton} />
         {errorNotice}
         {linkedMailError && <p className="notice failed" role="alert">{linkedMailError}</p>}
         {selected ? <>
@@ -637,13 +638,10 @@ export function IntakeWorkspace({ view, counts, mailbox, sync, revision, refresh
 
   return (
     <main className="workbench queue-page">
-      <div className="workbench-heading">
-        <div><h1>待处理</h1><p>检查采集异常，核对交付附件。</p></div>
-        <div className="workbench-heading-actions">
-          {onReviewDelivery && <button className="button" type="button" onClick={onReviewDelivery}>交付待核对</button>}
-          {refreshButton}
-        </div>
-      </div>
+      <WorkbenchHeader {...heading} actions={<>
+        {onReviewDelivery && <button className="button" type="button" onClick={onReviewDelivery}>交付待核对</button>}
+        {refreshButton}
+      </>} />
       {issue && <div className="notice failed sync-notice" role="status">
         <span>{sync.kind === "folder" ? "文件夹标识发生变化，采集已暂停。" : sync.kind === "failed" ? "上次邮箱同步失败，可继续查看已归档邮件。" : "暂时无法读取邮箱同步状态。"}</span>
         {onConfigure && sync.kind !== "unknown" && <button type="button" className="text-button" onClick={onConfigure}>

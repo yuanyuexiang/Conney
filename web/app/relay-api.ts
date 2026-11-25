@@ -33,6 +33,7 @@ const messages: Record<string, string> = {
   mailbox_config_changed: "邮箱配置已修改，请刷新后重新测试。",
   mailbox_test_required: "请通过连接测试后再启用采集。",
   operations_unavailable: "暂时无法读取运行监测数据。",
+  dashboard_unavailable: "暂时无法读取仪表盘数据，请刷新后重试。",
   invalid_delivery_fields: "请检查料号、订单、数量或发货日期。人工 ETA 须晚于或等于发货日。",
   invalid_request_origin: "请求已失效，请刷新页面后重试。",
   mapping_scope_exists: "同一客户、料号和匹配范围已有映射，请编辑已有记录。",

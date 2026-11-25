@@ -1,6 +1,4 @@
-.workbench-heading-actions,
 .delivery-toolbar,
-.delivery-workbench-header,
 .delivery-detail-title,
 .delivery-view-bar,
 .delivery-meta,
@@ -11,10 +9,6 @@
   gap: .75rem;
 }
 
-.delivery-workbench { min-width: 0; }
-.delivery-workbench-header { margin-bottom: .85rem; }
-.delivery-workbench-header h1 { font-size: clamp(1.4rem, 2vw, 1.8rem); }
-.delivery-workbench-header p { color: var(--muted); margin-top: .2rem; font-size: .87rem; }
 .delivery-columns {
   display: grid;
   grid-template-columns: clamp(195px, 20vw, 254px) minmax(0, 1fr);
@@ -238,10 +232,8 @@
   .delivery-workbench:not(.batch-open) .delivery-columns > .delivery-empty,
   .delivery-workbench.batch-open .delivery-batch-list { display: none; }
   .delivery-grid { max-height: 65vh; }
-  .delivery-workbench-header { align-items: flex-start; }
 }
 @media (max-width: 480px) {
-  .delivery-workbench-header p { max-width: 15rem; }
   .delivery-grid .kn-column { width: 82px; min-width: 82px; max-width: 82px; }
   .delivery-grid .customer-column { left: 82px; width: 93px; min-width: 93px; max-width: 93px; }
   .ant-modal .mapping-modal-panel { --mapping-inset: 1rem; border-radius: 10px; }

@@ -1,8 +1,9 @@
 import os
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time, timedelta
 from email.message import EmailMessage
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
@@ -26,6 +27,50 @@ def test_live_endpoint() -> None:
 def test_operations_requires_a_session() -> None:
     with TestClient(app) as client:
         assert client.get("/api/v1/health/operations").status_code == 401
+        assert client.get("/api/v1/dashboard").status_code == 401
+
+
+@pytest.mark.skipif(os.environ.get("RELAY_TEST_DB") != "1", reason="Requires test PostgreSQL")
+def test_dashboard_counts_shanghai_calendar_days_and_recent_receipts(
+    signed_in: Callable[[TestClient, Role], User],
+) -> None:
+    shanghai = ZoneInfo("Asia/Shanghai")
+    today = datetime.now(shanghai).date()
+    midnight = datetime.combine(today, time.min, shanghai)
+    timestamps = [midnight, midnight - timedelta(seconds=1), midnight - timedelta(days=7)]
+    engine = get_engine()
+    with engine.begin() as connection:
+        for uid, timestamp in enumerate(timestamps, start=1):
+            connection.execute(
+                text(
+                    "INSERT INTO received_mail (source, folder, uidvalidity, uid, received_at, "
+                    "subject, sender) VALUES ('local:dashboard-test', 'INBOX', 1, :uid, "
+                    ":received_at, :subject, 'test@example.test')"
+                ),
+                {"uid": uid, "received_at": timestamp, "subject": f"Dashboard test {uid}"},
+            )
+    try:
+        with TestClient(app) as client:
+            signed_in(client, "viewer")
+            response = client.get("/api/v1/dashboard")
+            assert response.status_code == 200
+            assert response.headers["cache-control"] == "no-store"
+            result = response.json()
+            assert [entry["date"] for entry in result["receipts"]] == [
+                (today - timedelta(days=offset)).isoformat() for offset in range(6, -1, -1)
+            ]
+            assert [entry["received"] for entry in result["receipts"]] == [0, 0, 0, 0, 0, 1, 1]
+            assert [mail["subject"] for mail in result["recent_mail"]] == [
+                "Dashboard test 1",
+                "Dashboard test 2",
+                "Dashboard test 3",
+            ]
+            assert result["recent_mail"][0]["state"] == "archived"
+    finally:
+        with engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM received_mail WHERE source = 'local:dashboard-test'")
+            )
 
 
 @pytest.mark.skipif(os.environ.get("RELAY_TEST_DB") != "1", reason="Requires test PostgreSQL")

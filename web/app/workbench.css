@@ -188,9 +188,35 @@
 .sidebar-footer strong { color: #fff; font-size: .95rem; font-weight: 650; }
 
 .workbench { min-width: 0; padding: clamp(1.15rem, 2.8vw, 2.45rem); background: #f3f6fa; }
-.workbench-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: 1.15rem; }
+.workbench-heading {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .55rem .85rem;
+  min-height: 44px;
+  margin-bottom: 1.15rem;
+}
+.workbench-heading-main, .workbench-heading-text, .workbench-heading-actions { display: flex; align-items: center; min-width: 0; }
+.workbench-heading-main { gap: .65rem; }
+.workbench-heading-text { flex-wrap: wrap; gap: .12rem .8rem; }
+.workbench-heading-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 35px;
+  height: 35px;
+  border-radius: 7px;
+  background: var(--blue-light);
+  color: var(--blue-dark);
+  font-size: 1.13rem;
+}
 .workbench-heading h1 { font-size: clamp(1.45rem, 2vw, 1.85rem); font-weight: 705; line-height: 1.25; }
-.workbench-heading p { margin-top: .4rem; color: var(--muted); font-size: .9rem; line-height: 1.5; }
+.workbench-heading-meta { color: var(--muted); font-size: .83rem; line-height: 1.4; white-space: nowrap; }
+.workbench-heading-actions { flex-wrap: wrap; justify-content: flex-end; gap: .55rem; margin-inline-start: auto; }
+.workbench-heading-actions .button { min-height: 36px; }
+.management-page > .page-card,
+.management-page > :is(.mailbox-settings, .user-management) > .page-card:first-of-type { margin-top: 0; }
 .refresh-button { flex: none; }
 .search {
   display: flex;
@@ -349,9 +375,6 @@
 .attachment-quantities > .button { margin-top: .65rem; }
 .date-location { display: block; margin-top: .22rem; }
 
-.archive-page .workbench-heading { align-items: center; }
-.archive-title { display: flex; align-items: center; gap: .65rem; }
-.archive-title > .anticon { color: var(--blue-dark); font-size: 1.25rem; }
 .archive-surface { border: 1px solid var(--border); border-radius: 8px; background: white; }
 .archive-toolbar { --archive-control-height: 41px; display: flex; flex-wrap: wrap; align-items: center; gap: .7rem .65rem; padding: .9rem 1rem; }
 .archive-toolbar .search { flex: 1 1 18rem; max-width: 30rem; background: white; }
@@ -460,7 +483,7 @@
 @media (min-width: 761px) {
   .app-shell { height: 100dvh; }
   .body-layout { min-height: 0; }
-  .workbench, .full-page, .sidebar { overflow-y: auto; }
+  .workbench, .sidebar { overflow-y: auto; }
   .queue-layout { max-height: max(285px, calc(100dvh - 17rem)); align-items: stretch; }
   .queue-layout .mail-list { display: flex; flex-direction: column; min-height: 0; }
   .queue-layout .mail-items, .queue-layout .mail-detail { overflow-y: auto; }
@@ -497,6 +520,10 @@
   .archive-toolbar .search { flex: 1 0 100%; max-width: none; }
   .archive-count { font-size: .78rem; }
   .workbench-heading { gap: .5rem; }
+  .workbench-heading-main { gap: .48rem; }
+  .workbench-heading-icon { width: 31px; height: 31px; font-size: 1rem; }
+  .workbench-heading-actions { gap: .35rem; }
+  .workbench-heading-actions .button { padding-inline: .56rem; font-size: .8rem; }
   .archive-table table { min-width: 0; table-layout: fixed; }
   .archive-table thead, .archive-table td:not(:first-child) { display: none; }
   .archive-table td:first-child { min-width: 0; width: auto; }

@@ -190,6 +190,10 @@ def test_delivery_draft_from_archive_to_generation(
         assert any(
             row["id"] == draft["id"] for row in client.get("/api/v1/delivery?review=true").json()
         )
+        dashboard = reader.get("/api/v1/dashboard")
+        assert dashboard.status_code == 200
+        assert dashboard.json()["parsed_today"] >= 1
+        assert dashboard.json()["delivery_drafts"] == dashboard.json()["drafts_for_review"] == 1
         with TestClient(app) as manager:
             signed_in(manager, "admin")
             assert manager.delete(f"/api/v1/users/{owner.id}", headers=_BROWSER).status_code == 204

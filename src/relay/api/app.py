@@ -7,6 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from relay.api.auth import router as auth_router
+from relay.api.dashboard import router as dashboard_router
 from relay.api.delivery import router as delivery_router
 from relay.api.intake import router as intake_router
 from relay.api.mailbox import router as mailbox_router
@@ -21,6 +22,7 @@ app.include_router(mailbox_router)
 app.include_router(intake_router)
 app.include_router(delivery_router)
 app.include_router(operations_router)
+app.include_router(dashboard_router)
 
 
 @app.exception_handler(RequestValidationError)

@@ -3,6 +3,7 @@
 import {
   CloudServerOutlined,
   DatabaseOutlined,
+  DashboardOutlined,
   InboxOutlined,
   FileExcelOutlined,
   LogoutOutlined,
@@ -14,7 +15,8 @@ import Image from "next/image";
 import { useEffect, useState } from "react";
 import { AccountLayout, PasswordForm, SignIn } from "./account-forms";
 import { AccountMenu } from "./account-menu";
-import { IntakeWorkspace } from "./intake-workspace";
+import { IntakeWorkspace, type QueueFilter } from "./intake-workspace";
+import { Dashboard } from "./dashboard";
 import { DeliveryWorkspace } from "./delivery-workspace";
 import { MaterialMappingPage } from "./material-mapping";
 import { MailboxSettings } from "./mailbox-settings";
@@ -22,9 +24,11 @@ import { describeSync, formatSyncTime, type IntakeCounts, type MailboxStatus } f
 import { messageOf, relayRequest, RelayRequestError, type User } from "./relay-api";
 import { UserManagement } from "./user-management";
 import { SystemStatus } from "./system-status";
+import { WorkbenchHeader } from "./workbench-header";
 
 const navigation = [
   { label: "工作台", items: [
+    { id: "dashboard", label: "仪表盘", icon: DashboardOutlined, adminOnly: false },
     { id: "queue", label: "待处理", icon: InboxOutlined, adminOnly: false },
     { id: "archive", label: "收件档案", icon: DatabaseOutlined, adminOnly: false },
     { id: "delivery", label: "交付计划", icon: FileExcelOutlined, adminOnly: false },
@@ -120,7 +124,8 @@ function Workspace({ user, onUpdated, onLogout, leaving, logoutError }: {
   leaving: boolean;
   logoutError: string;
 }) {
-  const [section, setSection] = useState<Section>("queue");
+  const [section, setSection] = useState<Section>("dashboard");
+  const [queueFilter, setQueueFilter] = useState<QueueFilter>();
   const [draftId, setDraftId] = useState<number>();
   const [archiveMailId, setArchiveMailId] = useState<number>();
   const [deliveryReview, setDeliveryReview] = useState(false);
@@ -191,12 +196,31 @@ function Workspace({ user, onUpdated, onLogout, leaving, logoutError }: {
   function navigate(id: Section) {
     setArchiveMailId(undefined);
     setDeliveryReview(false);
+    setQueueFilter(undefined);
     setSection(id);
+  }
+
+  function openArchive(mailId?: number) {
+    navigate("archive");
+    setArchiveMailId(mailId);
+  }
+
+  function openQueue(filter?: QueueFilter) {
+    navigate("queue");
+    setQueueFilter(filter);
+  }
+
+  function openDeliveryReview() {
+    openQueue();
+    setDraftId(undefined);
+    setDeliveryReview(true);
   }
 
   const admin = user.role === "admin";
   const allowed = navigation.flatMap((group) => [...group.items]).filter((item) => admin || !item.adminOnly);
   const active = allowed.find((item) => item.id === section) ?? allowed[0];
+  const HeadingIcon = active.icon;
+  const heading = { title: active.label, icon: <HeadingIcon /> };
   const actionable = counts ? counts.failed + counts.review + counts.queued : 0;
 
   return (
@@ -230,23 +254,27 @@ function Workspace({ user, onUpdated, onLogout, leaving, logoutError }: {
           <div className="sidebar-footer"><strong>Relay</strong><span>康尼新能源</span></div>
         </nav>
 
-        {active.id === "delivery" || (active.id === "queue" && deliveryReview) ? (
-          <DeliveryWorkspace key={active.id} admin={admin} draftId={draftId} onSelect={setDraftId}
-            review={deliveryReview} onQueue={() => setDeliveryReview(false)}
-            onArchive={(id) => { navigate("archive"); setArchiveMailId(id); }} />
+        {active.id === "dashboard" ? (
+          <Dashboard heading={heading} counts={counts} sync={sync} syncAt={mailbox?.last_sync_at} revision={revision}
+            onRefresh={refresh} onArchive={() => openArchive()} onMail={openArchive} onQueue={openQueue}
+            onDelivery={() => { setDraftId(undefined); navigate("delivery"); }}
+            onReview={openDeliveryReview} onConfigure={admin ? () => navigate("mailbox") : undefined} />
+        ) : active.id === "delivery" || (active.id === "queue" && deliveryReview) ? (
+          <DeliveryWorkspace key={active.id} heading={deliveryReview ? { title: "交付待核对", icon: <FileExcelOutlined /> } : heading}
+            admin={admin} draftId={draftId} onSelect={setDraftId}
+            review={deliveryReview} onQueue={() => openQueue()} onArchive={openArchive} />
         ) : active.id === "queue" || active.id === "archive" ? (
-          <IntakeWorkspace key={active.id} view={active.id} counts={counts} sync={sync}
-            mailbox={mailbox} revision={revision} refresh={refresh} onViewArchive={() => navigate("archive")}
-            initialMailId={archiveMailId}
-            onReviewDelivery={() => { setDraftId(undefined); setDeliveryReview(true); }}
+          <IntakeWorkspace key={`${active.id}:${queueFilter ?? ""}`} heading={heading} view={active.id} counts={counts} sync={sync}
+            mailbox={mailbox} revision={revision} refresh={refresh} onViewArchive={() => openArchive()}
+            initialMailId={archiveMailId} initialQueueFilter={queueFilter} onReviewDelivery={openDeliveryReview}
             onDraftOpened={admin ? (id) => { setDraftId(id); navigate("delivery"); } : undefined}
             onConfigure={admin ? () => navigate("mailbox") : undefined} />
         ) : active.id === "system" ? (
-          <SystemStatus onConfigure={admin ? () => navigate("mailbox") : undefined}
-            onViewQueue={() => navigate("queue")} />
+          <SystemStatus heading={heading} onConfigure={admin ? () => navigate("mailbox") : undefined}
+            onViewQueue={() => openQueue()} />
         ) : (
-          <main className="full-page">
-            <h1>{active.label}</h1>
+          <main className="workbench management-page">
+            <WorkbenchHeader {...heading} />
             {active.id === "mailbox" && <MailboxSettings onChanged={refresh} />}
             {active.id === "users" && <UserManagement current={user} />}
             {active.id === "mappings" && <MaterialMappingPage />}

@@ -6,6 +6,7 @@ import {
 } from "@ant-design/icons";
 import { useEffect, useState, type ReactNode } from "react";
 import { relayRequest } from "./relay-api";
+import { WorkbenchHeader, type WorkbenchHeading } from "./workbench-header";
 import { describeSync, type MailboxStatus } from "./workbench-status";
 
 type Tone = "ready" | "checking" | "attention" | "unavailable";
@@ -96,7 +97,8 @@ function parsingBadge(parsing: Parsing | undefined): Badge {
   return { tone: "ready", label: "队列空闲" };
 }
 
-export function SystemStatus({ onConfigure, onViewQueue }: {
+export function SystemStatus({ heading, onConfigure, onViewQueue }: {
+  heading: WorkbenchHeading;
   onConfigure?: () => void; onViewQueue: () => void;
 }) {
   const [snapshot, setSnapshot] = useState<Snapshot>();
@@ -162,13 +164,12 @@ export function SystemStatus({ onConfigure, onViewQueue }: {
 
   return (
     <main className="workbench operations-page">
-      <div className="workbench-heading">
-        <div><h1>系统状态</h1><p>查看从邮件采集到附件归档和解析的运行情况。</p></div>
+      <WorkbenchHeader {...heading} actions={
         <button type="button" className="button refresh-button" disabled={checking}
           onClick={() => setRefresh((value) => value + 1)}>
           <ReloadOutlined aria-hidden="true" /> {checking ? "检查中…" : "重新检查"}
         </button>
-      </div>
+      } />
 
       <div className="operation-summary" role="status">
         <Signal {...summary} />

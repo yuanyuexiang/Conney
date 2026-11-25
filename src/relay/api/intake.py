@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import Connection, text
 
 from relay.api.auth import SignedInUser
 from relay.database.session import get_engine
@@ -106,6 +106,19 @@ _MAIL_SUMMARY = f"""
     ) AS att_summary
 """
 _ACTIONABLE_STATES = "('failed', 'review', 'queued')"
+
+
+def latest_mail(connection: Connection, limit: int) -> list[MailSummary]:
+    rows = connection.execute(
+        text(
+            f"{_MAIL_SUMMARY} "
+            "WHERE mail.id IN (SELECT id FROM received_mail "
+            "ORDER BY received_at DESC, id DESC LIMIT :limit) "
+            "ORDER BY mail.received_at DESC, mail.id DESC"
+        ),
+        {"limit": limit},
+    ).mappings()
+    return [MailSummary.model_validate(row) for row in rows]
 
 
 @router.get("/counts")

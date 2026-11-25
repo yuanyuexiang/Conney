@@ -29,7 +29,6 @@ button:focus-visible { position: relative; z-index: 1; }
 h1, h2, h3, p { margin: 0; }
 
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
-.full-page h1 { font-size: 1.35rem; font-weight: 690; letter-spacing: -.015em; }
 .section-heading > span { color: var(--muted); font-size: .8125rem; white-space: nowrap; }
 .status { display: inline-flex; align-items: center; min-height: 24px; border-radius: 4px; padding: .125rem .46rem; white-space: nowrap; font-weight: 570; font-size: .8125rem; }
 .status.complete { background: #e6f4eb; color: #226246; }
@@ -124,7 +123,6 @@ tr:last-child td { border-bottom: 0; }
 .page-card { border: 1px solid var(--border); border-radius: 8px; background: white; color: var(--ink); }
 .small-empty { margin-top: .75rem; border: 1px solid var(--border); border-radius: 8px; background: white; }
 
-.full-page { min-width: 0; padding: 1.75rem clamp(1.2rem, 3vw, 2.5rem); }
 .page-card { margin-top: 1.25rem; padding: 1rem; }
 
 .mailbox-card { max-width: 700px; padding: 1.2rem; }
