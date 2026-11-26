@@ -146,7 +146,10 @@ def _remove_test_delivery(mail_id: int, item: str) -> None:
 
 @pytest.mark.skipif(os.environ.get("RELAY_TEST_DB") != "1", reason="Requires test PostgreSQL")
 def test_delivery_draft_from_archive_to_generation(
-    tmp_path: Path, signed_in: Callable[[TestClient, Role], User], request: pytest.FixtureRequest
+    tmp_path: Path,
+    signed_in: Callable[[TestClient, Role], User],
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     item = "00" + uuid4().hex[:8]
     workbook = Workbook()
@@ -183,6 +186,7 @@ def test_delivery_draft_from_archive_to_generation(
         filename="forecast.xlsx",
     )
     archive = Archive(tmp_path / "archive")
+    monkeypatch.setenv("RELAY_ARCHIVE_DIR", str(archive.root))
     identity = MailIdentity(f"test:{item}", "INBOX", 1, 1, datetime.now(UTC))
     received = receive(mail.as_bytes(), identity, archive)
     request.addfinalizer(lambda: _remove_test_delivery(received.mail_id, item))
@@ -310,12 +314,110 @@ def test_delivery_draft_from_archive_to_generation(
         with TestClient(app) as manager:
             signed_in(manager, "admin")
             assert manager.delete(f"/api/v1/users/{owner.id}", headers=_BROWSER).status_code == 204
-        assert reader.get(draft_url).json() == rematched.json()
-        with get_engine().connect() as connection:
-            assert (
-                connection.scalar(
-                    text("SELECT updated_by FROM delivery_drafts WHERE run_id = :id"),
-                    {"id": draft["id"]},
+            assert reader.get(draft_url).json() == rematched.json()
+            with get_engine().connect() as connection:
+                assert (
+                    connection.scalar(
+                        text("SELECT updated_by FROM delivery_drafts WHERE run_id = :id"),
+                        {"id": draft["id"]},
+                    )
+                    == owner.id
                 )
-                == owner.id
+
+            assert manager.post(mapping_url, headers=_BROWSER, json=mapping).status_code == 201
+            current_revision = rematched.json()["revision"]
+            params = {"revision": current_revision}
+            assert reader.delete(draft_url, params=params, headers=_BROWSER).status_code == 403
+            assert manager.delete(draft_url, params=params).status_code == 403
+            stale = manager.delete(
+                draft_url, params={"revision": current_revision - 1}, headers=_BROWSER
             )
+            assert stale.status_code == 409
+            assert manager.delete(draft_url, params=params, headers=_BROWSER).status_code == 204
+            assert reader.get(draft_url).status_code == 404
+            assert reader.get(f"{draft_url}/draft.xlsx", params=params).status_code == 404
+            assert reader.get("/api/v1/delivery").json() == []
+            assert reader.get("/api/v1/delivery?review=true").json() == []
+            dashboard_after = reader.get("/api/v1/dashboard").json()
+            assert dashboard_after["delivery_drafts"] == dashboard_after["drafts_for_review"] == 0
+            raw = reader.get(f"/api/v1/intake/attachments/{attachments[0]['id']}/file")
+            assert raw.status_code == 200
+            assert raw.content == content.getvalue()
+
+            reopened = manager.post(source_url, headers=_BROWSER)
+            assert reopened.status_code == 200
+            generated = reopened.json()
+            assert generated["revision"] > current_revision
+            assert generated["id"] == draft["id"]
+            assert generated["materials"][0]["mapping"]["internal_item"] == "0000012345"
+            regenerated_entry = generated["materials"][0]["entries"][0]
+            assert regenerated_entry["shipment"] is None
+            assert regenerated_entry["state"] == "transport_missing"
+            assert manager.delete(draft_url, params=params, headers=_BROWSER).status_code == 409
+            assert reader.get(draft_url).json() == generated
+
+            entries = generated["materials"][0]["entries"]
+            interval_url = f"{draft_url}/reviews/{entries[2]['id']}"
+            code_url = f"{draft_url}/reviews/{entries[3]['id']}"
+            keep = {
+                "revision": generated["revision"],
+                "review": {"action": "keep_interval", "source_note": "Customer forecast"},
+            }
+            assert reader.put(interval_url, headers=_BROWSER, json=keep).status_code == 403
+            assert manager.put(interval_url, json=keep).status_code == 403
+            kept = manager.put(interval_url, headers=_BROWSER, json=keep).json()
+            assert kept["materials"][0]["entries"][2]["state"] == "confirmed_interval"
+            assert kept["pending_entries"] == generated["pending_entries"] - 1
+            assert manager.put(interval_url, headers=_BROWSER, json=keep).status_code == 409
+
+            date_review = {
+                "revision": kept["revision"],
+                "review": {
+                    "action": "set_date",
+                    "delivery_date": "2026-12-11",
+                    "source_note": "Customer confirmed date",
+                },
+            }
+            reply = manager.put(interval_url, headers=_BROWSER, json=date_review)
+            assert reply.status_code == 422
+            assert reply.json()["detail"] == "invalid_delivery_review"
+            date_review["review"]["delivery_date"] = "2026-12-09"
+            dated = manager.put(interval_url, headers=_BROWSER, json=date_review).json()
+            interval = dated["materials"][0]["entries"][2]
+            assert interval["requested_date"] is None
+            assert interval["earliest_date"] == "2026-12-05"
+            assert interval["period"] == "2026-12-07"
+            assert interval["state"] == "transport_missing"
+
+            code_review = {
+                "revision": dated["revision"],
+                "review": {"action": "exclude", "source_note": "=Source confirmation"},
+            }
+            excluded = manager.put(code_url, headers=_BROWSER, json=code_review).json()
+            assert excluded["materials"][0]["entries"][3]["state"] == "excluded"
+            assert excluded["pending_entries"] == dated["pending_entries"] - 1
+            download = reader.get(
+                f"{draft_url}/draft.xlsx", params={"revision": excluded["revision"]}
+            )
+            trace = load_workbook(BytesIO(download.content))["需求与来源"]
+            assert trace["F9"].value == "83"
+            assert trace["U9"].value == "从客户需求排除"
+            assert trace["W9"].data_type == "s"
+            assert trace["W9"].value == "=Source confirmation"
+
+            code_review["revision"] = excluded["revision"]
+            code_review["review"]["action"] = "include"
+            included = manager.put(code_url, headers=_BROWSER, json=code_review).json()
+            assert included["materials"][0]["entries"][3]["state"] == "transport_missing"
+            assigned = manager.put(
+                f"{draft_url}/shipments/{entries[3]['id']}",
+                headers=_BROWSER,
+                json={"revision": included["revision"], "shipment": shipment},
+            ).json()
+            assert assigned["materials"][0]["entries"][3]["state"] == "scheduled"
+            code_review["revision"] = assigned["revision"]
+            assert manager.put(code_url, headers=_BROWSER, json=code_review).status_code == 409
+            reviewed_again = manager.post(
+                f"{draft_url}/refresh", headers=_BROWSER, json={"revision": assigned["revision"]}
+            ).json()
+            assert reviewed_again["materials"][0]["entries"] == assigned["materials"][0]["entries"]

@@ -43,6 +43,8 @@ const messages: Record<string, string> = {
   delivery_source_unavailable: "此附件尚未完成德科报文解析。",
   delivery_entry_not_found: "该数量记录不存在，请重新打开草稿。",
   delivery_entry_requires_review: "请先确认物料匹配、数量代码和交货日期。",
+  delivery_review_unavailable: "当前记录无法核对。已有发货安排时，请先清除该安排。",
+  invalid_delivery_review: "请检查核对选项和依据。确认的交货日须在原报文区间内。",
 };
 
 export class RelayRequestError extends Error {

@@ -1,6 +1,6 @@
 from collections import defaultdict
 from collections.abc import Iterable
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Literal
 
@@ -18,8 +18,16 @@ Identifier = Annotated[str, StringConstraints(strip_whitespace=True, min_length=
 PackSize = Annotated[int, Field(gt=0, le=1_000_000_000)]
 MappingState = Literal["matched", "missing", "ambiguous", "supplier_mismatch"]
 EntryState = Literal[
-    "scheduled", "recorded_zero", "transport_missing", "period_review", "code_review"
+    "scheduled",
+    "recorded_zero",
+    "transport_missing",
+    "period_review",
+    "code_review",
+    "confirmed_interval",
+    "excluded",
 ]
+EntryReviewKind = Literal["code_review", "period_review"]
+EntryReviewAction = Literal["include", "exclude", "set_date", "keep_interval"]
 
 RULE_VERSION = "drx-1"
 
@@ -99,6 +107,22 @@ class Shipment(ShipmentInput):
     entered_by: str
 
 
+class EntryReviewInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: EntryReviewAction
+    delivery_date: date | None = None
+    source_note: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=240)
+    ]
+
+
+class EntryReview(EntryReviewInput):
+    kind: EntryReviewKind
+    reviewed_by: str
+    reviewed_at: datetime
+
+
 class DraftEntry(BaseModel):
     id: int
     quantity: Decimal
@@ -116,6 +140,7 @@ class DraftEntry(BaseModel):
     state: EntryState
     shipment: Shipment | None = None
     eta: date | None = None
+    review: EntryReview | None = None
 
     @field_serializer("quantity")
     def serialize_quantity(self, quantity: Decimal) -> str:
@@ -204,3 +229,41 @@ def entry_state(
     if requested is None:
         return "period_review"
     return "recorded_zero" if quantity == 0 else "transport_missing"
+
+
+def review_kind(entry: DraftEntry) -> EntryReviewKind | None:
+    state = entry_state(
+        entry.code, entry.unit, entry.status_code, entry.requested_date, entry.quantity
+    )
+    return state if state == "code_review" or state == "period_review" else None
+
+
+def valid_entry_review(entry: DraftEntry, kind: EntryReviewKind, values: EntryReviewInput) -> bool:
+    action, day = values.action, values.delivery_date
+    if kind == "code_review":
+        if action == "exclude":
+            return day is None
+        if action != "include" or entry.unit != "C62":
+            return False
+        if entry.requested_date is not None:
+            return day is None
+    elif action == "keep_interval":
+        return day is None and entry.earliest_date is not None and entry.latest_date is not None
+    elif action != "set_date":
+        return False
+    return day is not None and (
+        (entry.earliest_date is None or day >= entry.earliest_date)
+        and (entry.latest_date is None or day <= entry.latest_date)
+    )
+
+
+def apply_entry_review(entry: DraftEntry, review: EntryReview) -> None:
+    entry.review = review
+    day = review.delivery_date or entry.requested_date
+    entry.period = demand_period(day, entry.earliest_date, entry.latest_date)
+    if review.action == "exclude":
+        entry.state = "excluded"
+    elif review.action == "keep_interval":
+        entry.state = "confirmed_interval"
+    else:
+        entry.state = "recorded_zero" if entry.quantity == 0 else "transport_missing"

@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -16,16 +16,21 @@ from relay.services.delivery import (
     DraftEntry,
     DraftMaterial,
     DraftSnapshot,
+    EntryReview,
+    EntryReviewInput,
     MappingEdit,
     MappingValues,
     MaterialCandidate,
     MaterialMapping,
     Shipment,
     ShipmentInput,
+    apply_entry_review,
     demand_period,
     entry_state,
     find_drx_mapping,
     matching_order,
+    review_kind,
+    valid_entry_review,
 )
 from relay.services.delivery_xlsx import build_workbook
 
@@ -68,6 +73,10 @@ class RefreshDraft(BaseModel):
 
 class ChangeShipment(RefreshDraft):
     shipment: ShipmentInput | None
+
+
+class ConfirmReview(RefreshDraft):
+    review: EntryReviewInput
 
 
 @router.get("/material-mappings")
@@ -213,7 +222,7 @@ def _counts(materials: list[DraftMaterial]) -> tuple[int, int]:
     return (
         sum(material.mapping_state != "matched" for material in materials),
         sum(
-            entry.state not in {"scheduled", "recorded_zero"}
+            entry.state in {"code_review", "period_review", "transport_missing"}
             for material in materials
             for entry in material.entries
         ),
@@ -223,11 +232,10 @@ def _counts(materials: list[DraftMaterial]) -> tuple[int, int]:
 def _build_drx_snapshot(
     connection: Connection, source: RowMapping, previous: DeliveryDraft | None = None
 ) -> DraftSnapshot:
-    previous_shipments = {
-        entry.id: entry.shipment
+    previous_entries = {
+        entry.id: entry
         for material in (previous.materials if previous else [])
         for entry in material.entries
-        if entry.shipment is not None
     }
     blocks = (
         connection.execute(
@@ -287,24 +295,24 @@ def _build_drx_snapshot(
             record["requested_date"],
             record["quantity"],
         )
-        shipment = previous_shipments.get(record["id"])
-        if shipment is not None and state == "transport_missing":
-            state = "scheduled"
-        else:
-            shipment = None
-        entries[record["block_id"]].append(
-            DraftEntry.model_validate(
-                {
-                    **record,
-                    "period": demand_period(
-                        record["requested_date"], record["earliest_date"], record["latest_date"]
-                    ),
-                    "state": state,
-                    "shipment": shipment,
-                    "eta": shipment.arrival() if shipment else None,
-                }
-            )
+        entry = DraftEntry.model_validate(
+            {
+                **record,
+                "period": demand_period(
+                    record["requested_date"], record["earliest_date"], record["latest_date"]
+                ),
+                "state": state,
+            }
         )
+        prior = previous_entries.get(entry.id)
+        if prior and prior.review and prior.review.kind == state:
+            if valid_entry_review(entry, prior.review.kind, prior.review):
+                apply_entry_review(entry, prior.review)
+        if prior and prior.shipment and entry.state == "transport_missing":
+            entry.state = "scheduled"
+            entry.shipment = prior.shipment
+            entry.eta = prior.shipment.arrival()
+        entries[record["block_id"]].append(entry)
     result = []
     for block in blocks:
         mapping_state, selected_mapping = find_drx_mapping(
@@ -344,7 +352,8 @@ def _draft_row(connection: Connection, run_id: int, *, lock: bool = False) -> Ro
     row = (
         connection.execute(
             text(
-                "SELECT * FROM delivery_drafts WHERE run_id = :id" + (" FOR UPDATE" if lock else "")
+                "SELECT * FROM delivery_drafts WHERE run_id = :id AND deleted_at IS NULL"
+                + (" FOR UPDATE" if lock else "")
             ),
             {"id": run_id},
         )
@@ -400,7 +409,8 @@ def list_drafts(
                 "snapshot->>'document_date' AS document_date, "
                 "snapshot->>'pending_mappings' AS pending_mappings, "
                 "snapshot->>'pending_entries' AS pending_entries FROM delivery_drafts "
-                "WHERE (CAST(:before AS bigint) IS NULL OR run_id < :before) "
+                "WHERE deleted_at IS NULL "
+                "AND (CAST(:before AS bigint) IS NULL OR run_id < :before) "
                 "AND (:q = '' OR strpos(lower(concat_ws(' ', snapshot->>'filename', "
                 "snapshot->>'document_no', '德科 DRX')), lower(:q)) > 0) "
                 f"AND (NOT :review OR {DRAFT_REVIEW_PREDICATE}) "
@@ -424,7 +434,8 @@ def open_draft(attachment_id: int, actor: AdminUser) -> DeliveryDraft:
         run_id = source["id"]
         existing = (
             connection.execute(
-                text("SELECT * FROM delivery_drafts WHERE run_id = :id"), {"id": run_id}
+                text("SELECT * FROM delivery_drafts WHERE run_id = :id AND deleted_at IS NULL"),
+                {"id": run_id},
             )
             .mappings()
             .one_or_none()
@@ -435,7 +446,10 @@ def open_draft(attachment_id: int, actor: AdminUser) -> DeliveryDraft:
         connection.execute(
             text(
                 "INSERT INTO delivery_drafts (run_id, snapshot, updated_by) "
-                "VALUES (:id, :snapshot, :actor) ON CONFLICT (run_id) DO NOTHING"
+                "VALUES (:id, :snapshot, :actor) ON CONFLICT (run_id) DO UPDATE "
+                "SET revision = delivery_drafts.revision + 1, snapshot = excluded.snapshot, "
+                "updated_at = now(), updated_by = excluded.updated_by, deleted_at = NULL "
+                "WHERE delivery_drafts.deleted_at IS NOT NULL"
             ),
             {"id": run_id, "snapshot": Jsonb(draft.model_dump(mode="json")), "actor": actor.id},
         )
@@ -446,6 +460,22 @@ def open_draft(attachment_id: int, actor: AdminUser) -> DeliveryDraft:
 def read_draft(run_id: int, _: SignedInUser) -> DeliveryDraft:
     with get_engine().connect() as connection:
         return _snapshot(_draft_row(connection, run_id))
+
+
+@router.delete("/delivery/{run_id}", dependencies=_BROWSER, status_code=204)
+def delete_draft(run_id: int, revision: Annotated[int, Query(ge=1)], actor: AdminUser) -> None:
+    with get_engine().begin() as connection:
+        draft = _snapshot(_draft_row(connection, run_id, lock=True))
+        _check_revision(draft, revision)
+        connection.execute(
+            text("""
+                UPDATE delivery_drafts
+                SET deleted_at = now(), snapshot = '{}', revision = revision + 1,
+                    updated_at = now(), updated_by = :actor
+                WHERE run_id = :id
+            """),
+            {"id": run_id, "actor": actor.id},
+        )
 
 
 @router.post("/delivery/{run_id}/refresh", dependencies=_BROWSER)
@@ -469,18 +499,7 @@ def change_shipment(
     with get_engine().begin() as connection:
         draft = _snapshot(_draft_row(connection, run_id, lock=True))
         _check_revision(draft, request.revision)
-        match = next(
-            (
-                (material, entry)
-                for material in draft.materials
-                for entry in material.entries
-                if entry.id == entry_id
-            ),
-            None,
-        )
-        if match is None:
-            raise HTTPException(404, detail="delivery_entry_not_found")
-        material, entry = match
+        material, entry = _draft_entry(draft, entry_id)
         if material.mapping_state != "matched" or entry.state not in {
             "transport_missing",
             "scheduled",
@@ -493,6 +512,40 @@ def change_shipment(
         )
         entry.state = "scheduled" if entry.shipment else "transport_missing"
         entry.eta = entry.shipment.arrival() if entry.shipment else None
+        draft.pending_mappings, draft.pending_entries = _counts(draft.materials)
+        return _replace_draft(connection, run_id, draft, actor.id)
+
+
+def _draft_entry(draft: DeliveryDraft, entry_id: int) -> tuple[DraftMaterial, DraftEntry]:
+    for material in draft.materials:
+        for entry in material.entries:
+            if entry.id == entry_id:
+                return material, entry
+    raise HTTPException(404, detail="delivery_entry_not_found")
+
+
+@router.put("/delivery/{run_id}/reviews/{entry_id}", dependencies=_BROWSER)
+def confirm_review(
+    run_id: int, entry_id: int, request: ConfirmReview, actor: AdminUser
+) -> DeliveryDraft:
+    with get_engine().begin() as connection:
+        draft = _snapshot(_draft_row(connection, run_id, lock=True))
+        _check_revision(draft, request.revision)
+        _, entry = _draft_entry(draft, entry_id)
+        kind = review_kind(entry)
+        if kind is None or entry.shipment is not None:
+            raise HTTPException(409, detail="delivery_review_unavailable")
+        if not valid_entry_review(entry, kind, request.review):
+            raise HTTPException(422, detail="invalid_delivery_review")
+        apply_entry_review(
+            entry,
+            EntryReview(
+                **request.review.model_dump(),
+                kind=kind,
+                reviewed_by=actor.username,
+                reviewed_at=datetime.now(UTC),
+            ),
+        )
         draft.pending_mappings, draft.pending_entries = _counts(draft.materials)
         return _replace_draft(connection, run_id, draft, actor.id)
 

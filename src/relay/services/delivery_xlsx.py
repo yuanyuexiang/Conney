@@ -3,6 +3,7 @@ from datetime import date
 from decimal import Decimal, localcontext
 from io import BytesIO
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -168,6 +169,11 @@ def _source_sheet(sheet: Worksheet, draft: DraftSnapshot) -> None:
         "发货依据",
         "录入人",
         "映射版本",
+        "核对结论",
+        "确认交货日",
+        "核对依据",
+        "核对人",
+        "核对时间（北京时间）",
     ]
     sheet.append(headers)
     states = {
@@ -176,11 +182,21 @@ def _source_sheet(sheet: Worksheet, draft: DraftSnapshot) -> None:
         "transport_missing": "待补运输信息",
         "period_review": "区间待核对",
         "code_review": "代码待核对",
+        "confirmed_interval": "已确认区间预测",
+        "excluded": "已排除",
     }
+    decisions = {
+        "include": "计入客户需求",
+        "exclude": "从客户需求排除",
+        "set_date": "确认交货日",
+        "keep_interval": "保留为区间预测",
+    }
+    shanghai = ZoneInfo("Asia/Shanghai")
     for material in draft.materials:
         for entry in material.entries:
             shipment = entry.shipment
             mapping = material.mapping
+            review = entry.review
             row = sheet.max_row + 1
             for column, value in (
                 (1, material.customer_item),
@@ -202,6 +218,15 @@ def _source_sheet(sheet: Worksheet, draft: DraftSnapshot) -> None:
                 (18, shipment.source_note if shipment else None),
                 (19, shipment.entered_by if shipment else None),
                 (20, f"#{mapping.id} / v{mapping.revision}" if mapping else None),
+                (21, decisions[review.action] if review else None),
+                (23, review.source_note if review else None),
+                (24, review.reviewed_by if review else None),
+                (
+                    25,
+                    review.reviewed_at.astimezone(shanghai).isoformat(timespec="seconds")
+                    if review
+                    else None,
+                ),
             ):
                 _write_text(sheet, row, column, value)
             for column, day in (
@@ -211,16 +236,19 @@ def _source_sheet(sheet: Worksheet, draft: DraftSnapshot) -> None:
                 (14, shipment.ship_date if shipment else None),
                 (16, entry.eta),
                 (17, shipment.manual_eta if shipment else None),
+                (22, review.delivery_date if review else None),
             ):
                 if day is not None:
                     sheet.cell(row, column, day).number_format = _DATE_FORMAT
     _header(sheet, 5)
     sheet.freeze_panes = "D6"
-    sheet.auto_filter.ref = f"A5:T{sheet.max_row}"
+    sheet.auto_filter.ref = f"A5:Y{sheet.max_row}"
     for column in range(1, len(headers) + 1):
         sheet.column_dimensions[get_column_letter(column)].width = 17
     sheet.column_dimensions["B"].width = 24
     sheet.column_dimensions["R"].width = 34
+    sheet.column_dimensions["W"].width = 34
+    sheet.column_dimensions["Y"].width = 26
 
 
 def build_workbook(draft: DraftSnapshot) -> bytes:

@@ -66,7 +66,7 @@ def read_dashboard(_: SignedInUser) -> DashboardSummary:
                 text(
                     "SELECT count(*) AS total, "
                     f"count(*) FILTER (WHERE {DRAFT_REVIEW_PREDICATE}) AS for_review "
-                    "FROM delivery_drafts"
+                    "FROM delivery_drafts WHERE deleted_at IS NULL"
                 )
             ).one()
             recent = latest_mail(connection, 5)

@@ -1,18 +1,20 @@
 "use client";
 
 import {
-  ArrowLeftOutlined, DownloadOutlined, FileExcelOutlined, ReloadOutlined,
+  ArrowLeftOutlined, DeleteOutlined, DownloadOutlined, FileExcelOutlined, ReloadOutlined,
 } from "@ant-design/icons";
-import { Drawer, type RefSelectProps } from "antd";
+import { Drawer, Modal, type RefSelectProps } from "antd";
 import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
-  addQuantities, entryLabels, mappingLabels, needsReview, shortDate,
-  type DeliveryDraft, type Entry, type Material, type Shipment, type Summary,
+  addQuantities, entryLabels, mappingLabels, needsReview, reviewLabels, shortDate,
+  type DeliveryDraft, type Entry, type Material, type ReviewAction, type ReviewInput, type ReviewKind,
+  type Shipment, type Summary,
 } from "./delivery-api";
 import { MappingDialog } from "./material-mapping";
 import { messageOf, relayRequest, RelayRequestError } from "./relay-api";
 import { WorkbenchHeader, type WorkbenchHeading } from "./workbench-header";
 import { WorkbenchSelect } from "./workbench-select";
+import { chinaTime } from "./workbench-status";
 
 type GridMode = "demand" | "shipment";
 type Mode = GridMode | "review";
@@ -101,14 +103,20 @@ function DeliveryGrid({ draft, mode, onSelect }: {
             <td className="freeze customer-column"><strong>{material.customer_item ?? "—"}</strong><small>{material.order_no ?? "—"}</small></td>
             {axis.map(([key]) => {
               const entries = cells.get(key) ?? [];
-              const countable = entries.filter((entry) => entry.state !== "code_review");
+              const countable = entries.filter(({ state }) => state !== "code_review" && state !== "excluded");
+              const codePending = entries.some(({ state }) => state === "code_review");
+              const reviewLabel = codePending ? "代码待确认" : "已排除";
               return (
                 <td className="quantity-cell" key={key}>
                   {entries.length > 0 && <button className={countable.length ? "quantity-link" : "quantity-link needs-review"}
                     type="button" onClick={() => onSelect({ materialId: material.id,
                       entryIds: entries.map(({ id }) => id), label: periodLabel(key, mode) })}>
-                    {countable.length ? addQuantities(countable) : "待核对"}
-                    {countable.length > 0 && countable.length !== entries.length && <span className="review-dot" aria-label="另有待核对记录" />}
+                    {countable.length ? addQuantities(countable) : <>
+                      <span>{entries.length === 1 ? `原报文 ${addQuantities(entries)}` : `${entries.length} 条原报文`}</span>
+                      <small className={codePending ? "quantity-review-label" : undefined}>{reviewLabel}</small>
+                    </>}
+                    {countable.length > 0 && countable.length !== entries.length &&
+                      <span className="review-dot" aria-label={`另有${reviewLabel}的记录`} title={`另有${reviewLabel}的记录`} />}
                   </button>}
                 </td>
               );
@@ -173,11 +181,71 @@ function ShipmentForm({ entry, busy, error, onSave, onClose }: {
   );
 }
 
-function DeliveryDetail({ id, admin, review, onChange, onBack, onArchive }: {
+function EntryReviewForm({ entry, kind, busy, error, onSave, onClose }: {
+  entry: Entry;
+  kind: ReviewKind;
+  busy: boolean;
+  error: string;
+  onSave: (review: ReviewInput) => void;
+  onClose: () => void;
+}) {
+  const [action, setAction] = useState(entry.review?.action);
+  const actions: ReviewAction[] = kind === "code_review"
+    ? (entry.unit === "C62" ? ["include", "exclude"] : ["exclude"])
+    : (entry.earliest_date && entry.latest_date ? ["keep_interval", "set_date"] : ["set_date"]);
+  const needsDate = action === "set_date" || (action === "include" && !entry.requested_date);
+  const options = actions.map((value) => ({ value, label: reviewLabels[value] }));
+  return (
+    <form className="account-form shipment-form" aria-label="核对结论"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!action || busy) return;
+        const fields = new FormData(event.currentTarget);
+        onSave({ action, delivery_date: needsDate ? String(fields.get("delivery_date")) : null,
+          source_note: String(fields.get("source_note") ?? "").trim() });
+      }}>
+      <label>核对结论
+        <WorkbenchSelect label="核对结论" aria-required="true" disabled={busy} value={action}
+          options={options} placeholder="请选择核对结论" onChange={setAction} />
+      </label>
+      {needsDate && <label>确认交货日
+        <input type="date" name="delivery_date" required disabled={busy} defaultValue={entry.review?.delivery_date ?? ""}
+          min={entry.earliest_date ?? undefined} max={entry.latest_date ?? undefined} />
+      </label>}
+      <label>核对依据
+        <input name="source_note" maxLength={240} required disabled={busy} defaultValue={entry.review?.source_note}
+          placeholder="例如客户确认邮件或计划编号" />
+      </label>
+      {error && <p className="notice failed" role="alert">{error}</p>}
+      <div className="account-form-actions">
+        <button type="button" className="button" disabled={busy} onClick={onClose}>取消</button>
+        <button type="submit" className="button primary-button" disabled={busy || !action}>
+          {busy ? "正在保存…" : "保存核对结论"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function EntryReviewDetails({ entry }: { entry: Entry }) {
+  const saved = entry.review;
+  if (!saved) return null;
+  return (
+    <dl className="delivery-review-result">
+      <div><dt>核对结论</dt><dd>{reviewLabels[saved.action]}</dd></div>
+      {saved.delivery_date && <div><dt>确认交货日</dt><dd>{saved.delivery_date}</dd></div>}
+      <div><dt>核对依据</dt><dd>{saved.source_note}</dd></div>
+      <div><dt>核对人 / 时间</dt><dd>{saved.reviewed_by} · {chinaTime.format(new Date(saved.reviewed_at))}</dd></div>
+    </dl>
+  );
+}
+
+function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArchive }: {
   id: number;
   admin: boolean;
   review: boolean;
   onChange: (draft: DeliveryDraft) => void;
+  onDeleted: (draft: DeliveryDraft) => void;
   onBack: () => void;
   onArchive: (mailId: number) => void;
 }) {
@@ -188,8 +256,13 @@ function DeliveryDetail({ id, admin, review, onChange, onBack, onArchive }: {
   const [mappingMaterial, setMappingMaterial] = useState<Material>();
   const [shipmentId, setShipmentId] = useState<number>();
   const [shipmentError, setShipmentError] = useState("");
+  const [reviewId, setReviewId] = useState<number>();
+  const [reviewError, setReviewError] = useState("");
   const [busy, setBusy] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [deleteRevision, setDeleteRevision] = useState<number>();
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [reload, setReload] = useState(0);
 
   useEffect(() => {
@@ -200,21 +273,21 @@ function DeliveryDetail({ id, admin, review, onChange, onBack, onArchive }: {
     return () => controller.abort();
   }, [id, reload]);
 
-  async function update(path: string, method: string, values: object, shipments = false) {
+  async function update(path: string, method: string, values: object, operation?: "shipment" | "review") {
     if (!detail || busy) return;
     setBusy(true);
-    if (shipments) setShipmentError("");
-    else setError("");
+    const setOperationError = operation === "review" ? setReviewError : operation === "shipment" ? setShipmentError : setError;
+    setOperationError("");
     try {
       const draft = await relayRequest<DeliveryDraft>(`/delivery/${id}/${path}`, {
         method, body: JSON.stringify({ ...values, revision: detail.revision }),
       });
       setDetail(draft);
       onChange(draft);
-      if (shipments) setShipmentId(undefined);
+      if (operation === "shipment") setShipmentId(undefined);
+      if (operation === "review") setReviewId(undefined);
     } catch (reason) {
-      if (shipments) setShipmentError(messageOf(reason));
-      else setError(messageOf(reason));
+      setOperationError(messageOf(reason));
       if (reason instanceof RelayRequestError && reason.status === 409) setReload((value) => value + 1);
     } finally {
       setBusy(false);
@@ -246,14 +319,47 @@ function DeliveryDetail({ id, admin, review, onChange, onBack, onArchive }: {
     }
   }
 
+  async function removeDraft() {
+    if (!detail || deleteRevision !== detail.revision || deleting) return;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      await relayRequest<void>(`/delivery/${id}?revision=${deleteRevision}`, { method: "DELETE" });
+      onDeleted(detail);
+    } catch (reason) {
+      if (reason instanceof RelayRequestError && reason.status === 404) {
+        onDeleted(detail);
+        return;
+      }
+      setDeleteError(messageOf(reason));
+      if (reason instanceof RelayRequestError && reason.status === 409) setReload((value) => value + 1);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   function show(selection: Selection) {
     setShipmentId(undefined);
     setShipmentError("");
+    setReviewId(undefined);
+    setReviewError("");
     setSelection(selection);
   }
 
   const material = detail?.materials.find((item) => item.id === selection?.materialId);
   const entries = material?.entries.filter((entry) => selection?.entryIds.includes(entry.id)) ?? [];
+  const reviewCounts = new Map<Entry["state"], number>();
+  for (const row of detail?.materials ?? []) {
+    for (const entry of row.entries) {
+      if (needsReview(entry)) reviewCounts.set(entry.state, (reviewCounts.get(entry.state) ?? 0) + 1);
+    }
+  }
+  const reviewBreakdown = [
+    { label: "物料映射待核对", count: detail?.pending_mappings ?? 0, unit: "个" },
+    { label: "报文代码待确认", count: reviewCounts.get("code_review") ?? 0, unit: "条" },
+    { label: "日期区间待核对", count: reviewCounts.get("period_review") ?? 0, unit: "条" },
+    { label: "待补发货安排", count: reviewCounts.get("transport_missing") ?? 0, unit: "条" },
+  ].filter(({ count }) => count > 0);
 
   return (
     <section className="delivery-detail" aria-label="交付批次详情">
@@ -266,9 +372,16 @@ function DeliveryDetail({ id, admin, review, onChange, onBack, onArchive }: {
                 <p className="delivery-eyebrow">德科 DRX · 报文 {detail.document_no ?? "—"}</p>
                 <h2>交付草稿 <span className="delivery-badge review">版本 {detail.revision}</span></h2>
               </div>
-              <button type="button" className="button primary-button" disabled={downloading || busy} onClick={() => void download()}>
-                <DownloadOutlined aria-hidden="true" /> {downloading ? "正在生成…" : "下载草稿"}
-              </button>
+              <div className="delivery-detail-actions">
+                {admin && <button type="button" className="button delivery-delete-button" aria-haspopup="dialog"
+                  disabled={downloading || busy || deleting} onClick={() => {
+                    setDeleteError("");
+                    setDeleteRevision(detail.revision);
+                  }}><DeleteOutlined aria-hidden="true" /> 删除草稿</button>}
+                <button type="button" className="button primary-button" disabled={downloading || busy} onClick={() => void download()}>
+                  <DownloadOutlined aria-hidden="true" /> {downloading ? "正在生成…" : "下载草稿"}
+                </button>
+              </div>
             </div>
             <div className="delivery-meta">
               <button type="button" className="text-button" onClick={() => onArchive(detail.mail_id)} title={detail.filename}>
@@ -298,11 +411,16 @@ function DeliveryDetail({ id, admin, review, onChange, onBack, onArchive }: {
           </div>
           {mode === "review" ? (
             <div className="delivery-review-list">
+              {reviewBreakdown.length > 0 && <dl className="delivery-review-counts" aria-label="待核对原因">
+                {reviewBreakdown.map(({ label, count, unit }) => <div key={label}>
+                  <dt>{label}</dt><dd>{count} {unit}</dd>
+                </div>)}
+              </dl>}
               {detail.materials.filter((row) => row.mapping_state !== "matched" || row.entries.some(needsReview)).map((row) => {
                 const pending = row.entries.filter(needsReview);
                 return (
                   <div className="delivery-review-row" key={row.id}>
-                    <div><strong>{row.customer_item ?? "缺少客户料号"}</strong><small>订单 {row.order_no ?? "—"} · {pending.length} 条需求待核对</small></div>
+                    <div><strong>{row.customer_item ?? "缺少客户料号"}</strong><small>订单 {row.order_no ?? "—"}{pending.length > 0 && ` · ${pending.length} 条需求待处理`}</small></div>
                     <span className={`delivery-badge ${row.mapping_state === "matched" ? "" : "review"}`}>{mappingLabels[row.mapping_state]}</span>
                     {admin && row.mapping_state === "missing" && row.customer_item && row.order_no &&
                       <button type="button" className="button" disabled={busy} onClick={() => setMappingMaterial(row)}>补充映射</button>}
@@ -310,7 +428,7 @@ function DeliveryDetail({ id, admin, review, onChange, onBack, onArchive }: {
                       <button type="button" className="button" disabled={busy} onClick={() => setMappingMaterial(row)}>核对映射</button>}
                     <button type="button" className="text-button" onClick={() => show({
                       materialId: row.id, entryIds: pending.map(({ id: entryId }) => entryId), label: "待核对记录",
-                    })}>查看记录</button>
+                    })}>处理记录</button>
                   </div>
                 );
               })}
@@ -332,33 +450,45 @@ function DeliveryDetail({ id, admin, review, onChange, onBack, onArchive }: {
             {admin && material.mapping_state === "missing" && material.customer_item && material.order_no &&
               <button type="button" className="button" disabled={busy} onClick={() => setMappingMaterial(material)}>补充映射</button>}
           </div>
-          {entries.map((entry) => (
-            <article className="delivery-source-row" key={entry.id}>
-              <div className="delivery-source-title">
-                <strong>{addQuantities([entry])} <small>{entry.unit ?? ""}</small></strong>
-                <span className={`delivery-badge ${needsReview(entry) ? "review" : ""}`}>{entryLabels[entry.state]}</span>
-              </div>
-              <dl>
-                <div><dt>附件原值</dt><dd>{entry.raw_quantity ?? entry.quantity}</dd></div>
-                <div><dt>原始日期</dt><dd>{entry.requested_date ?? (entry.earliest_date || entry.latest_date ? entry.period : "—")}</dd></div>
-                <div><dt>数量位置</dt><dd className="source-coordinate">{entry.quantity_cell ?? "—"}</dd></div>
-                <div><dt>日期位置</dt><dd className="source-coordinate">{[entry.date_cell, entry.end_date_cell].filter(Boolean).join(" / ") || "—"}</dd></div>
-                <div><dt>数量类型 / 状态</dt><dd>{entry.code ?? "—"} / {entry.status_code ?? "—"}</dd></div>
-                {entry.shipment && <>
-                  <div><dt>发货日 / 运输</dt><dd>{entry.shipment.ship_date} · {entry.shipment.mode === "air" ? "空运" : "海运"}</dd></div>
-                  <div><dt>ETA</dt><dd>{entry.eta}（{entry.shipment.manual_eta ? "人工填报" : entry.shipment.mode === "air" ? "发货日 + 14 天" : "发货日 + 84 天"}）</dd></div>
-                  <div><dt>发货依据</dt><dd>{entry.shipment.source_note} · {entry.shipment.entered_by}</dd></div>
-                </>}
-              </dl>
-              {admin && material.mapping_state === "matched" && (entry.state === "scheduled" || entry.state === "transport_missing") &&
-                (shipmentId === entry.id ? <ShipmentForm entry={entry} busy={busy} error={shipmentError}
-                  onClose={() => setShipmentId(undefined)}
-                  onSave={(shipment) => void update(`shipments/${entry.id}`, "PUT", { shipment }, true)} />
+          {entries.map((entry) => {
+            const kind = entry.review?.kind ??
+              (entry.state === "code_review" || entry.state === "period_review" ? entry.state : undefined);
+            return (
+              <article className="delivery-source-row" key={entry.id}>
+                <div className="delivery-source-title">
+                  <strong>{addQuantities([entry])} <small>{entry.unit ?? ""}</small></strong>
+                  <span className={`delivery-badge ${needsReview(entry) ? "review" : ""}`}>{entryLabels[entry.state]}</span>
+                </div>
+                <dl>
+                  <div><dt>附件原值</dt><dd>{entry.raw_quantity ?? entry.quantity}</dd></div>
+                  <div><dt>原始日期</dt><dd>{entry.requested_date ?? (entry.earliest_date || entry.latest_date ? entry.period : "—")}</dd></div>
+                  <div><dt>数量位置</dt><dd className="source-coordinate">{entry.quantity_cell ?? "—"}</dd></div>
+                  <div><dt>日期位置</dt><dd className="source-coordinate">{[entry.date_cell, entry.end_date_cell].filter(Boolean).join(" / ") || "—"}</dd></div>
+                  <div><dt>数量类型 / 状态</dt><dd>{entry.code ?? "—"} / {entry.status_code ?? "—"}</dd></div>
+                  {entry.shipment && <>
+                    <div><dt>发货日 / 运输</dt><dd>{entry.shipment.ship_date} · {entry.shipment.mode === "air" ? "空运" : "海运"}</dd></div>
+                    <div><dt>ETA</dt><dd>{entry.eta}（{entry.shipment.manual_eta ? "人工填报" : entry.shipment.mode === "air" ? "发货日 + 14 天" : "发货日 + 84 天"}）</dd></div>
+                    <div><dt>发货依据</dt><dd>{entry.shipment.source_note} · {entry.shipment.entered_by}</dd></div>
+                  </>}
+                </dl>
+                <EntryReviewDetails entry={entry} />
+                {admin && kind && !entry.shipment && (reviewId === entry.id
+                  ? <EntryReviewForm entry={entry} kind={kind} busy={busy} error={reviewError}
+                    onClose={() => setReviewId(undefined)}
+                    onSave={(review) => void update(`reviews/${entry.id}`, "PUT", { review }, "review")} />
                   : <button type="button" className="button" disabled={busy} onClick={() => {
-                    setShipmentError(""); setShipmentId(entry.id);
-                  }}>{entry.shipment ? "编辑发货信息" : "填写发货信息"}</button>)}
-            </article>
-          ))}
+                    setShipmentId(undefined); setReviewError(""); setReviewId(entry.id);
+                  }}>{entry.review ? "修改核对结论" : kind === "code_review" ? "确认报文代码" : "核对日期区间"}</button>)}
+                {admin && reviewId !== entry.id && material.mapping_state === "matched" && (entry.state === "scheduled" || entry.state === "transport_missing") &&
+                  (shipmentId === entry.id ? <ShipmentForm entry={entry} busy={busy} error={shipmentError}
+                    onClose={() => setShipmentId(undefined)}
+                    onSave={(shipment) => void update(`shipments/${entry.id}`, "PUT", { shipment }, "shipment")} />
+                    : <button type="button" className="button" disabled={busy} onClick={() => {
+                      setReviewId(undefined); setShipmentError(""); setShipmentId(entry.id);
+                    }}>{entry.shipment ? "编辑发货信息" : "填写发货信息"}</button>)}
+              </article>
+            );
+          })}
         </>}
       </Drawer>
       {mappingMaterial && <MappingDialog
@@ -368,6 +498,20 @@ function DeliveryDetail({ id, admin, review, onChange, onBack, onArchive }: {
           supplier_item: mappingMaterial.supplier_item }}
         onClose={() => setMappingMaterial(undefined)}
         onSaved={() => { setMappingMaterial(undefined); void update("refresh", "POST", {}); }} />}
+      <Modal title="删除交付草稿" open={deleteRevision !== undefined} width={460} centered
+        okText="确认删除" cancelText="取消"
+        okButtonProps={{ danger: true, disabled: deleteRevision !== detail?.revision }}
+        cancelButtonProps={{ autoFocus: true, disabled: deleting }}
+        confirmLoading={deleting} keyboard={!deleting}
+        closable={deleting ? false : { "aria-label": "关闭删除确认" }} mask={{ closable: false }}
+        onCancel={() => { if (!deleting) setDeleteRevision(undefined); }}
+        onOk={() => void removeDraft()}>
+        <p className="draft-delete-context">
+          {detail?.document_no && <strong>报文 {detail.document_no} · </strong>}{detail?.filename}
+        </p>
+        <p>已录入的核对结论和发货安排会随草稿删除。之后可以从「收件档案」的原始附件重新生成草稿。</p>
+        {deleteError && <p className="notice failed draft-delete-error" role="alert">{deleteError}</p>}
+      </Modal>
     </section>
   );
 }
@@ -388,6 +532,9 @@ export function DeliveryWorkspace({ heading, admin, draftId, onSelect, initialRe
   const [more, setMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const [deletedNotice, setDeletedNotice] = useState("");
+  const batchSearch = useRef<HTMLInputElement>(null);
+  const moreRequest = useRef<AbortController>(null);
   const forReview = status === "review";
   const query = `/delivery?${new URLSearchParams({ review: String(forReview), q: searchQuery })}`;
 
@@ -406,32 +553,46 @@ export function DeliveryWorkspace({ heading, admin, draftId, onSelect, initialRe
         setError("");
       })
       .catch((reason) => { if (!controller.signal.aborted) setError(messageOf(reason)); });
-    return () => controller.abort();
+    return () => { controller.abort(); moreRequest.current?.abort(); };
   }, [query, refresh]);
 
   async function loadMore() {
     const before = rows?.at(-1)?.id;
     if (!before || loadingMore) return;
+    const controller = new AbortController();
+    moreRequest.current = controller;
     setLoadingMore(true);
     try {
-      const result = await relayRequest<Summary[]>(`${query}&before=${before}`);
+      const result = await relayRequest<Summary[]>(`${query}&before=${before}`, { signal: controller.signal });
+      if (controller.signal.aborted) return;
       setRows((current) => current?.at(-1)?.id === before ? [...current, ...result] : current);
       setMore(result.length === 100);
     } catch (reason) {
-      setError(messageOf(reason));
+      if (!controller.signal.aborted) setError(messageOf(reason));
     } finally {
+      moreRequest.current = null;
       setLoadingMore(false);
     }
+  }
+
+  function draftDeleted(draft: DeliveryDraft) {
+    moreRequest.current?.abort();
+    setRows((current) => current?.filter(({ id }) => id !== draft.id));
+    setDeletedNotice(`已删除草稿「${draft.document_no ? `报文 ${draft.document_no}` : draft.filename}」。`);
+    setRefresh((value) => value + 1);
+    onSelect(undefined);
+    requestAnimationFrame(() => batchSearch.current?.focus({ preventScroll: true }));
   }
 
   return (
     <main className={`workbench delivery-workbench ${draftId !== undefined ? "batch-open" : ""}`}>
       <WorkbenchHeader {...heading} />
+      {deletedNotice && <p className="notice" role="status">{deletedNotice}</p>}
       <div className="delivery-columns">
         <aside className="delivery-batch-list" aria-label="交付批次">
           <div className="delivery-batch-filters">
             <h2>交付批次</h2>
-            <input value={search} aria-label="搜索交付批次" placeholder="搜索报文或附件" maxLength={120}
+            <input ref={batchSearch} value={search} aria-label="搜索交付批次" placeholder="搜索报文或附件" maxLength={120}
               onChange={(event) => setSearch(event.target.value)} />
             <WorkbenchSelect label="按核对状态筛选" filter active={forReview} value={status}
               options={[{ value: "all", label: "全部状态" }, { value: "review", label: "待核对" }]}
@@ -449,10 +610,14 @@ export function DeliveryWorkspace({ heading, admin, draftId, onSelect, initialRe
             const pending = row.pending_mappings + row.pending_entries;
             return (
               <button className={`delivery-batch ${row.id === draftId ? "selected" : ""}`} type="button"
-                key={row.id} aria-current={row.id === draftId ? "true" : undefined} onClick={() => onSelect(row.id)}>
+                key={row.id} aria-current={row.id === draftId ? "true" : undefined}
+                onClick={() => { setDeletedNotice(""); onSelect(row.id); }}>
                 <span><strong>德科 DRX</strong><span className={`delivery-badge ${pending ? "review" : ""}`}>{pending ? "待核对" : "草稿"}</span></span>
                 <span>报文 {row.document_no ?? "—"}<time>{shortDate(row.document_date)}</time></span>
-                {pending > 0 && <small>{row.pending_mappings} 个物料 · {row.pending_entries} 条需求</small>}
+                {pending > 0 && <small>{[
+                  row.pending_mappings > 0 && `${row.pending_mappings} 个物料待核对`,
+                  row.pending_entries > 0 && `${row.pending_entries} 条需求待处理`,
+                ].filter(Boolean).join(" · ")}</small>}
               </button>
             );
           })}
@@ -461,7 +626,7 @@ export function DeliveryWorkspace({ heading, admin, draftId, onSelect, initialRe
         </aside>
         {draftId !== undefined ?
           <DeliveryDetail key={draftId} id={draftId} admin={admin} review={forReview} onChange={() => setRefresh((value) => value + 1)}
-            onArchive={onArchive} onBack={() => onSelect(undefined)} />
+            onDeleted={draftDeleted} onArchive={onArchive} onBack={() => onSelect(undefined)} />
           : <section className="delivery-empty">
             <FileExcelOutlined aria-hidden="true" />
             <h2>{rows?.length ? "选择交付批次" : "暂无交付草稿"}</h2>

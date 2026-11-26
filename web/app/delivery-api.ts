@@ -42,6 +42,11 @@ export type Shipment = {
   entered_by: string;
 };
 
+export type ReviewKind = "code_review" | "period_review";
+export type ReviewAction = "include" | "exclude" | "set_date" | "keep_interval";
+export type ReviewInput = { action: ReviewAction; delivery_date: string | null; source_note: string };
+export type EntryReview = ReviewInput & { kind: ReviewKind; reviewed_by: string; reviewed_at: string };
+
 export type Entry = {
   id: number;
   quantity: string;
@@ -56,9 +61,10 @@ export type Entry = {
   earliest_date: string | null;
   latest_date: string | null;
   period: string;
-  state: "scheduled" | "recorded_zero" | "transport_missing" | "period_review" | "code_review";
+  state: "scheduled" | "recorded_zero" | "transport_missing" | ReviewKind | "confirmed_interval" | "excluded";
   shipment: Shipment | null;
   eta: string | null;
+  review: EntryReview | null;
 };
 
 export type Material = {
@@ -101,13 +107,22 @@ export const mappingLabels: Record<Material["mapping_state"], string> = {
 export const entryLabels: Record<Entry["state"], string> = {
   scheduled: "已安排",
   recorded_zero: "零需求",
-  transport_missing: "待补运输",
+  transport_missing: "待补发货安排",
   period_review: "区间待核对",
-  code_review: "代码待核对",
+  code_review: "代码待确认",
+  confirmed_interval: "已确认区间预测",
+  excluded: "已排除",
+};
+
+export const reviewLabels: Record<ReviewAction, string> = {
+  include: "计入客户需求",
+  exclude: "从客户需求排除",
+  set_date: "确认具体交货日",
+  keep_interval: "保留为区间预测",
 };
 
 export function needsReview(entry: Entry) {
-  return entry.state !== "scheduled" && entry.state !== "recorded_zero";
+  return entry.state === "transport_missing" || entry.state === "period_review" || entry.state === "code_review";
 }
 
 export function shortDate(value: string | null) {
