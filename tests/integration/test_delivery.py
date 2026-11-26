@@ -125,6 +125,7 @@ def _remove_test_delivery(mail_id: int, item: str) -> None:
             .all()
         )
         for statement in (
+            f"DELETE FROM delivery_draft_rule_history WHERE run_id IN ({runs})",
             f"DELETE FROM delivery_drafts WHERE run_id IN ({runs})",
             f"DELETE FROM parsed_quantity_records WHERE block_id IN ({blocks})",
             f"DELETE FROM parsed_material_blocks WHERE run_id IN ({runs})",
@@ -438,3 +439,111 @@ def test_delivery_draft_from_archive_to_generation(
                 f"{draft_url}/refresh", headers=_BROWSER, json={"revision": assigned["revision"]}
             ).json()
             assert reviewed_again["materials"][0]["entries"] == assigned["materials"][0]["entries"]
+
+            templates = reader.get("/api/v1/templates").json()
+            assert {template["code"] for template in templates} == {
+                "drx_delfor",
+                "vitesco_delfor",
+                "jlr_delfor",
+                "jlr_deljit",
+                "kroschu_4905",
+            }
+            rules_url = "/api/v1/templates/drx/rules"
+            rules = manager.get(rules_url).json()
+            assert rules["active"]["version"] == reviewed_again["rule_version"] == "drx-2"
+            attachment_id = attachments[0]["id"]
+            sample = next(
+                sample for sample in rules["samples"] if sample["attachment_id"] == attachment_id
+            )
+            assert sample["parser_version"] == attachments[0]["parser_version"]
+            trial_values = {
+                "baseline_id": rules["active"]["id"],
+                "attachment_id": attachment_id,
+                "parameters": {"air_days": 16, "sea_days": 84},
+                "simulated_date": "2026-11-09",
+                "source_note": "Approved transport schedule",
+            }
+            assert (
+                reader.post(f"{rules_url}/preview", headers=_BROWSER, json=trial_values).status_code
+                == 403
+            )
+            trial_response = manager.post(
+                f"{rules_url}/preview", headers=_BROWSER, json=trial_values
+            )
+            assert trial_response.status_code == 201, trial_response.text
+            trial = trial_response.json()
+
+            def remove_test_rule() -> None:
+                with get_engine().begin() as connection:
+                    connection.execute(
+                        text("DELETE FROM drx_rule_versions WHERE id = :id"), {"id": trial["id"]}
+                    )
+
+            request.addfinalizer(remove_test_rule)
+            assert trial["trial"]["changed_eta_count"] == 1
+            assert [entry["after"] for entry in trial["trial"]["simulated_etas"]] == [
+                "2026-11-25",
+                "2027-02-01",
+            ]
+            assert manager.get(rules_url).json()["active"]["version"] == "drx-2"
+            assert trial["id"] not in {
+                version["id"] for version in reader.get(rules_url).json()["versions"]
+            }
+            assert reader.get(draft_url).json() == reviewed_again
+
+            publish_url = f"{rules_url}/{trial['id']}/publish"
+            assert manager.post(publish_url).status_code == 403
+            published = manager.post(publish_url, headers=_BROWSER)
+            assert published.status_code == 200, published.text
+            assert published.json()["published_at"]
+            pinned = manager.post(
+                f"{draft_url}/refresh",
+                headers=_BROWSER,
+                json={"revision": reviewed_again["revision"]},
+            ).json()
+            assert pinned["rule_version"] == "drx-2"
+            assert pinned["materials"][0]["entries"][3]["eta"] == "2026-11-23"
+
+            preview = manager.get(f"{draft_url}/rule-preview").json()
+            assert preview["target"]["id"] == trial["id"]
+            assert preview["impact"]["changed_etas"][0]["before"] == "2026-11-23"
+            assert preview["impact"]["changed_etas"][0]["after"] == "2026-11-25"
+            apply_url = f"{draft_url}/apply-rule"
+            adoption = {"revision": preview["revision"], "target_id": trial["id"]}
+            assert (
+                manager.post(
+                    apply_url,
+                    headers=_BROWSER,
+                    json={**adoption, "revision": reviewed_again["revision"]},
+                ).status_code
+                == 409
+            )
+            result = manager.post(apply_url, headers=_BROWSER, json=adoption)
+            assert result.status_code == 200, result.text
+            adopted = result.json()
+            assert adopted["rule_version"] == trial["version"]
+            updated_entry = adopted["materials"][0]["entries"][3]
+            assert updated_entry == {**pinned["materials"][0]["entries"][3], "eta": "2026-11-25"}
+            history_url = f"{draft_url}/rule-history"
+            history = reader.get(history_url).json()
+            assert [(entry["revision"], entry["rule_version"]) for entry in history] == [
+                (pinned["revision"], "drx-2")
+            ]
+            past = reader.get(f"{history_url}/{pinned['revision']}/draft.xlsx")
+            latest = reader.get(f"{draft_url}/draft.xlsx", params={"revision": adopted["revision"]})
+            assert past.status_code == latest.status_code == 200
+            assert load_workbook(BytesIO(past.content))["给生产"]["L6"].value == "=L3+14"
+            latest_workbook = load_workbook(BytesIO(latest.content))
+            assert latest_workbook["给生产"]["L6"].value == "=L3+16"
+            assert latest_workbook["需求与来源"]["D4"].value == "drx-production-1"
+
+            assert (
+                manager.delete(
+                    draft_url, headers=_BROWSER, params={"revision": adopted["revision"]}
+                ).status_code
+                == 204
+            )
+            assert (
+                manager.post(source_url, headers=_BROWSER).json()["rule_version"]
+                == trial["version"]
+            )

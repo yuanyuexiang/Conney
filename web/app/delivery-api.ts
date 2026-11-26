@@ -1,3 +1,5 @@
+import type { DeliveryLeadTimes } from "./template-rules-api";
+
 export const customerLabels = {
   drx: "德科 DRX",
   kroschu: "科伯舒特",
@@ -93,6 +95,8 @@ export type Summary = {
 
 export type DeliveryDraft = Summary & {
   rule_version: string;
+  rule_parameters: DeliveryLeadTimes;
+  output_version: string;
   mail_id: number;
   revision: number;
   materials: Material[];

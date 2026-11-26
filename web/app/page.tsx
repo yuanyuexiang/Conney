@@ -7,6 +7,7 @@ import {
   FileExcelOutlined,
   LogoutOutlined,
   MailOutlined,
+  ProfileOutlined,
   TeamOutlined,
   TagsOutlined,
 } from "@ant-design/icons";
@@ -24,6 +25,8 @@ import { messageOf, relayRequest, RelayRequestError, type User } from "./relay-a
 import { UserManagement } from "./user-management";
 import { SystemStatus } from "./system-status";
 import { WorkbenchHeader } from "./workbench-header";
+import { TemplateRulesPage } from "./template-rules";
+import type { TemplateAttachment } from "./template-rules-api";
 
 const navigation = [
   { label: "工作台", items: [
@@ -33,6 +36,7 @@ const navigation = [
   ] },
   { label: "管理", items: [
     { id: "mappings", label: "物料匹配", icon: TagsOutlined, adminOnly: true },
+    { id: "templates", label: "模板规则", icon: ProfileOutlined, adminOnly: false },
     { id: "mailbox", label: "邮箱配置", icon: MailOutlined, adminOnly: true },
     { id: "users", label: "用户管理", icon: TeamOutlined, adminOnly: true },
     { id: "system", label: "系统状态", icon: CloudServerOutlined, adminOnly: false },
@@ -126,6 +130,7 @@ function Workspace({ user, onUpdated, onLogout, leaving, logoutError }: {
   const [archiveFilter, setArchiveFilter] = useState<MailFilter>("all");
   const [draftId, setDraftId] = useState<number>();
   const [archiveMailId, setArchiveMailId] = useState<number>();
+  const [templateSource, setTemplateSource] = useState<TemplateAttachment>();
   const [deliveryReview, setDeliveryReview] = useState(false);
   const [mailbox, setMailbox] = useState<MailboxStatus | null>();
   const [statusError, setStatusError] = useState(false);
@@ -193,6 +198,7 @@ function Workspace({ user, onUpdated, onLogout, leaving, logoutError }: {
 
   function navigate(id: Section) {
     setArchiveMailId(undefined);
+    setTemplateSource(undefined);
     setDeliveryReview(false);
     setArchiveFilter("all");
     setSection(id);
@@ -206,6 +212,11 @@ function Workspace({ user, onUpdated, onLogout, leaving, logoutError }: {
   function openArchiveFilter(filter: MailFilter) {
     navigate("archive");
     setArchiveFilter(filter);
+  }
+
+  function openTemplate(source: TemplateAttachment) {
+    navigate("templates");
+    setTemplateSource(source);
   }
 
   function openDeliveryReview() {
@@ -263,6 +274,7 @@ function Workspace({ user, onUpdated, onLogout, leaving, logoutError }: {
           <IntakeWorkspace key={`${archiveFilter}:${archiveMailId ?? ""}`} heading={heading} counts={counts} sync={sync}
             mailbox={mailbox} revision={revision} refresh={refresh}
             initialMailId={archiveMailId} initialFilter={archiveFilter}
+            onTemplate={openTemplate}
             onDraftOpened={admin ? (id) => { setDraftId(id); navigate("delivery"); } : undefined}
             onConfigure={admin ? () => navigate("mailbox") : undefined} />
         ) : active.id === "system" ? (
@@ -274,6 +286,9 @@ function Workspace({ user, onUpdated, onLogout, leaving, logoutError }: {
             {active.id === "mailbox" && <MailboxSettings onChanged={refresh} />}
             {active.id === "users" && <UserManagement current={user} />}
             {active.id === "mappings" && <MaterialMappingPage />}
+            {active.id === "templates" && <TemplateRulesPage
+              key={templateSource ? `${templateSource.code}:${templateSource.attachmentId ?? ""}` : "catalog"}
+              admin={admin} source={templateSource} onArchive={openArchive} />}
           </main>
         )}
       </div>

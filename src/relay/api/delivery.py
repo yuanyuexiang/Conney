@@ -1,10 +1,10 @@
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from psycopg.types.json import Jsonb
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import Connection, RowMapping, text
 from sqlalchemy.exc import IntegrityError
 
@@ -12,8 +12,10 @@ from relay.api.auth import AdminUser, SignedInUser, require_browser_request
 from relay.auth.accounts import User
 from relay.database.session import get_engine
 from relay.services.delivery import (
+    DRX_OUTPUT_VERSION,
     RULE_VERSION,
     Customer,
+    DeliveryLeadTimes,
     DraftEntry,
     DraftMaterial,
     DraftSnapshot,
@@ -34,7 +36,16 @@ from relay.services.delivery import (
     review_kind,
     valid_entry_review,
 )
+from relay.services.delivery_rules import (
+    DrxRuleVersion,
+    RuleImpact,
+    active_rule,
+    compare_lead_times,
+    rule_by_id,
+    rule_versions,
+)
 from relay.services.delivery_xlsx import build_workbook
+from relay.services.template_catalog import WORKBOOK_TEMPLATES, WorkbookTemplate
 
 router = APIRouter(prefix="/api/v1", tags=["delivery"])
 _BROWSER = [Depends(require_browser_request)]
@@ -45,7 +56,8 @@ DRAFT_REVIEW_PREDICATE = (
     "((snapshot->>'pending_mappings')::integer > 0 OR (snapshot->>'pending_entries')::integer > 0)"
 )
 _ATTACHMENT = """
-    SELECT run.id, run.source_fields, att.id AS attachment_id, att.mail_id, att.filename
+    SELECT run.id, run.source_fields, run.parser_version,
+           att.id AS attachment_id, att.mail_id, att.filename
     FROM parse_runs AS run
     JOIN parse_jobs AS job ON job.id = run.job_id
     JOIN received_attachments AS att ON att.id = job.attachment_id
@@ -84,6 +96,46 @@ class ConfirmReview(RefreshDraft):
 
 class ConfirmBatchReview(ConfirmReview):
     entry_ids: Annotated[list[int], Field(min_length=2, max_length=5000)]
+
+
+class RuleSample(BaseModel):
+    attachment_id: int
+    filename: str
+    document_no: str | None
+    document_date: str | None
+    parser_version: str
+
+
+class DrxRules(BaseModel):
+    active: DrxRuleVersion
+    versions: list[DrxRuleVersion]
+    samples: list[RuleSample]
+
+
+class TryRule(BaseModel):
+    baseline_id: int
+    attachment_id: int
+    parameters: DeliveryLeadTimes
+    simulated_date: Annotated[date, Field(ge=date(1900, 1, 1), le=date(9998, 12, 31))]
+    source_note: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=240)
+    ]
+
+
+class DraftRulePreview(BaseModel):
+    target: DrxRuleVersion
+    impact: RuleImpact
+    revision: int
+
+
+class ApplyRule(RefreshDraft):
+    target_id: int
+
+
+class DraftRuleHistory(BaseModel):
+    revision: int
+    rule_version: str
+    replaced_at: datetime
 
 
 @router.get("/material-mappings")
@@ -247,9 +299,23 @@ def _recount(draft: DraftSnapshot) -> None:
     )
 
 
+def _shipment_eta(shipment: ShipmentInput, parameters: DeliveryLeadTimes) -> date:
+    try:
+        return shipment.arrival(parameters)
+    except OverflowError:
+        raise HTTPException(422, detail="delivery_eta_out_of_range") from None
+
+
 def _build_drx_snapshot(
-    connection: Connection, source: RowMapping, previous: DeliveryDraft | None = None
+    connection: Connection,
+    source: RowMapping,
+    previous: DeliveryDraft | None = None,
+    *,
+    rule: DrxRuleVersion | None = None,
 ) -> DraftSnapshot:
+    parameters = (
+        previous.rule_parameters if previous else (rule.parameters if rule else DeliveryLeadTimes())
+    )
     previous_entries = {
         entry.id: entry
         for material in (previous.materials if previous else [])
@@ -331,7 +397,7 @@ def _build_drx_snapshot(
         if prior and prior.shipment and entry.state == "transport_missing":
             entry.state = "scheduled"
             entry.shipment = prior.shipment
-            entry.eta = prior.shipment.arrival()
+            entry.eta = _shipment_eta(prior.shipment, parameters)
         entries[record["block_id"]].append(entry)
     result = []
     for block in blocks:
@@ -356,7 +422,11 @@ def _build_drx_snapshot(
     fields = source["source_fields"]
     pending_mappings, pending_entries, pending_shipments = _counts(result)
     return DraftSnapshot(
-        rule_version=RULE_VERSION,
+        rule_version=previous.rule_version
+        if previous
+        else (rule.version if rule else RULE_VERSION),
+        rule_parameters=parameters,
+        output_version=previous.output_version if previous else DRX_OUTPUT_VERSION,
         attachment_id=source["attachment_id"],
         mail_id=source["mail_id"],
         filename=source["filename"],
@@ -447,13 +517,7 @@ def list_drafts(
 @router.post("/delivery/attachments/{attachment_id}", dependencies=_BROWSER)
 def open_draft(attachment_id: int, actor: AdminUser) -> DeliveryDraft:
     with get_engine().begin() as connection:
-        source = (
-            connection.execute(text(_ATTACHMENT + " AND att.id = :id"), {"id": attachment_id})
-            .mappings()
-            .one_or_none()
-        )
-        if source is None:
-            raise HTTPException(404, detail="delivery_source_unavailable")
+        source = _drx_source(connection, attachment_id=attachment_id)
         run_id = source["id"]
         existing = (
             connection.execute(
@@ -465,7 +529,7 @@ def open_draft(attachment_id: int, actor: AdminUser) -> DeliveryDraft:
         )
         if existing is not None:
             return _snapshot(existing)
-        draft = _build_drx_snapshot(connection, source)
+        draft = _build_drx_snapshot(connection, source, rule=active_rule(connection))
         connection.execute(
             text(
                 "INSERT INTO delivery_drafts (run_id, snapshot, updated_by) "
@@ -490,6 +554,9 @@ def delete_draft(run_id: int, revision: Annotated[int, Query(ge=1)], actor: Admi
     with get_engine().begin() as connection:
         draft = _snapshot(_draft_row(connection, run_id, lock=True))
         _check_revision(draft, revision)
+        connection.execute(
+            text("DELETE FROM delivery_draft_rule_history WHERE run_id = :id"), {"id": run_id}
+        )
         connection.execute(
             text("""
                 UPDATE delivery_drafts
@@ -534,7 +601,7 @@ def change_shipment(
             else None
         )
         entry.state = "scheduled" if entry.shipment else "transport_missing"
-        entry.eta = entry.shipment.arrival() if entry.shipment else None
+        entry.eta = _shipment_eta(entry.shipment, draft.rule_parameters) if entry.shipment else None
         _recount(draft)
         return _replace_draft(connection, run_id, draft, actor.id)
 
@@ -605,17 +672,238 @@ def _save_reviews(
     return _replace_draft(connection, draft.id, draft, actor.id)
 
 
+@router.get("/templates")
+def list_templates(_: SignedInUser) -> list[WorkbookTemplate]:
+    return list(WORKBOOK_TEMPLATES)
+
+
+@router.get("/templates/drx/rules")
+def list_drx_rules(
+    actor: SignedInUser, sample_id: Annotated[int, Query(gt=0)] | None = None
+) -> DrxRules:
+    with get_engine().connect() as connection:
+        samples = connection.execute(
+            text("""
+            SELECT att.id AS attachment_id, att.filename, run.parser_version,
+                   run.source_fields->'DelforNo'->>'value' AS document_no,
+                   run.source_fields->'DelforCreateDate'->>'value' AS document_date
+            FROM parse_runs AS run
+            JOIN parse_jobs AS job ON job.id = run.job_id
+            JOIN received_attachments AS att ON att.id = job.attachment_id
+            WHERE run.template = 'drx_delfor'
+            ORDER BY (att.id = :sample_id) DESC NULLS LAST, run.id DESC LIMIT 100
+        """),
+            {"sample_id": sample_id},
+        ).mappings()
+        return DrxRules(
+            active=active_rule(connection),
+            versions=rule_versions(connection, published_only=actor.role != "admin"),
+            samples=[RuleSample.model_validate(row) for row in samples],
+        )
+
+
+def _drx_source(connection: Connection, *, attachment_id: int) -> RowMapping:
+    source = (
+        connection.execute(text(_ATTACHMENT + " AND att.id = :id"), {"id": attachment_id})
+        .mappings()
+        .one_or_none()
+    )
+    if source is None:
+        raise HTTPException(404, detail="delivery_source_unavailable")
+    return source
+
+
+def _rule_impact(
+    draft: DraftSnapshot,
+    source: RowMapping,
+    baseline: DeliveryLeadTimes,
+    candidate: DeliveryLeadTimes,
+    simulated_date: date | None = None,
+) -> RuleImpact:
+    try:
+        return compare_lead_times(
+            draft,
+            baseline,
+            candidate,
+            parser_version=source["parser_version"],
+            simulated_date=simulated_date,
+            sample_revision=draft.revision if isinstance(draft, DeliveryDraft) else None,
+        )
+    except OverflowError:
+        raise HTTPException(422, detail="delivery_eta_out_of_range") from None
+
+
+@router.post("/templates/drx/rules/preview", dependencies=_BROWSER, status_code=201)
+def preview_drx_rule(request: TryRule, actor: AdminUser) -> DrxRuleVersion:
+    with get_engine().begin() as connection:
+        baseline = active_rule(connection)
+        if baseline.id != request.baseline_id:
+            raise HTTPException(409, detail="rule_baseline_changed")
+        if baseline.parameters == request.parameters:
+            raise HTTPException(422, detail="rule_parameters_unchanged")
+        source = _drx_source(connection, attachment_id=request.attachment_id)
+        existing = (
+            connection.execute(
+                text("SELECT * FROM delivery_drafts WHERE run_id = :id AND deleted_at IS NULL"),
+                {"id": source["id"]},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        sample = (
+            _snapshot(existing)
+            if existing
+            else _build_drx_snapshot(connection, source, rule=baseline)
+        )
+        impact = _rule_impact(
+            sample, source, baseline.parameters, request.parameters, request.simulated_date
+        )
+        version_id = connection.execute(
+            text("""
+            INSERT INTO drx_rule_versions
+                (air_days, sea_days, source_note, baseline_id, trial, created_by)
+            VALUES (:air_days, :sea_days, :note, :baseline, :trial, :actor) RETURNING id
+        """),
+            {
+                **request.parameters.model_dump(),
+                "note": request.source_note,
+                "baseline": baseline.id,
+                "trial": Jsonb(impact.model_dump(mode="json")),
+                "actor": actor.id,
+            },
+        ).scalar_one()
+        version = rule_by_id(connection, version_id)
+        assert version is not None
+        return version
+
+
+@router.post("/templates/drx/rules/{version_id}/publish", dependencies=_BROWSER)
+def publish_drx_rule(version_id: int, actor: AdminUser) -> DrxRuleVersion:
+    with get_engine().begin() as connection:
+        connection.execute(text("SELECT id FROM drx_rule_versions WHERE id = 2 FOR UPDATE"))
+        candidate = rule_by_id(connection, version_id)
+        if candidate is None:
+            raise HTTPException(404, detail="rule_version_not_found")
+        if candidate.published_at is not None:
+            return candidate
+        if candidate.baseline_id != active_rule(connection).id:
+            raise HTTPException(409, detail="rule_baseline_changed")
+        assert candidate.trial is not None
+        source = _drx_source(connection, attachment_id=candidate.trial.attachment_id)
+        current_draft_revision = connection.scalar(
+            text(
+                "SELECT revision FROM delivery_drafts "
+                "WHERE run_id = :id AND deleted_at IS NULL FOR SHARE"
+            ),
+            {"id": source["id"]},
+        )
+        if current_draft_revision != candidate.trial.sample_revision:
+            raise HTTPException(409, detail="rule_sample_changed")
+        connection.execute(
+            text("""
+            UPDATE drx_rule_versions SET published_at = clock_timestamp(), published_by = :actor
+            WHERE id = :id
+        """),
+            {"id": version_id, "actor": actor.id},
+        )
+        published = rule_by_id(connection, version_id)
+        assert published is not None
+        return published
+
+
+@router.get("/delivery/{run_id}/rule-preview")
+def preview_draft_rule(run_id: int, _: AdminUser) -> DraftRulePreview | None:
+    with get_engine().connect() as connection:
+        draft = _snapshot(_draft_row(connection, run_id))
+        target = active_rule(connection)
+        if target.version == draft.rule_version:
+            return None
+        source = _drx_source(connection, attachment_id=draft.attachment_id)
+        impact = _rule_impact(draft, source, draft.rule_parameters, target.parameters)
+        return DraftRulePreview(target=target, impact=impact, revision=draft.revision)
+
+
+@router.post("/delivery/{run_id}/apply-rule", dependencies=_BROWSER)
+def apply_draft_rule(run_id: int, request: ApplyRule, actor: AdminUser) -> DeliveryDraft:
+    with get_engine().begin() as connection:
+        # Publish and adopt use the same lock ordering so the preview target stays active.
+        connection.execute(text("SELECT id FROM drx_rule_versions WHERE id = 2 FOR SHARE"))
+        row = _draft_row(connection, run_id, lock=True)
+        draft = _snapshot(row)
+        _check_revision(draft, request.revision)
+        target = active_rule(connection)
+        if target.id != request.target_id:
+            raise HTTPException(409, detail="rule_baseline_changed")
+        if target.version == draft.rule_version:
+            return draft
+        for material in draft.materials:
+            for entry in material.entries:
+                if entry.shipment:
+                    entry.eta = _shipment_eta(entry.shipment, target.parameters)
+        connection.execute(
+            text("""
+            INSERT INTO delivery_draft_rule_history (run_id, revision, snapshot, replaced_by)
+            VALUES (:id, :revision, :snapshot, :actor)
+        """),
+            {
+                "id": run_id,
+                "revision": draft.revision,
+                "snapshot": Jsonb(row["snapshot"]),
+                "actor": actor.id,
+            },
+        )
+        draft.rule_version = target.version
+        draft.rule_parameters = target.parameters
+        return _replace_draft(connection, run_id, draft, actor.id)
+
+
+@router.get("/delivery/{run_id}/rule-history")
+def list_draft_rule_history(run_id: int, _: SignedInUser) -> list[DraftRuleHistory]:
+    with get_engine().connect() as connection:
+        _draft_row(connection, run_id)
+        rows = connection.execute(
+            text("""
+            SELECT revision, snapshot->>'rule_version' AS rule_version, replaced_at
+            FROM delivery_draft_rule_history WHERE run_id = :id ORDER BY revision DESC
+        """),
+            {"id": run_id},
+        ).mappings()
+        return [DraftRuleHistory.model_validate(row) for row in rows]
+
+
+def _draft_workbook_response(draft: DraftSnapshot, filename: str) -> Response:
+    return Response(
+        build_workbook(draft),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 @router.get("/delivery/{run_id}/draft.xlsx")
 def download_draft(run_id: int, _: SignedInUser, revision: Annotated[int, Query(ge=1)]) -> Response:
     with get_engine().connect() as connection:
         draft = _snapshot(_draft_row(connection, run_id))
     _check_revision(draft, revision)
-    return Response(
-        build_workbook(draft),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={
-            "Content-Disposition": f'attachment; filename="Relay-DRX-{run_id}-draft.xlsx"',
-            "Cache-Control": "no-store",
-            "X-Content-Type-Options": "nosniff",
-        },
+    return _draft_workbook_response(draft, f"Relay-DRX-{run_id}-draft.xlsx")
+
+
+@router.get("/delivery/{run_id}/rule-history/{revision}/draft.xlsx")
+def download_draft_rule_history(run_id: int, revision: int, _: SignedInUser) -> Response:
+    with get_engine().connect() as connection:
+        _draft_row(connection, run_id)
+        snapshot = connection.scalar(
+            text("""
+            SELECT snapshot FROM delivery_draft_rule_history
+            WHERE run_id = :id AND revision = :revision
+        """),
+            {"id": run_id, "revision": revision},
+        )
+    if snapshot is None:
+        raise HTTPException(404, detail="draft_not_found")
+    return _draft_workbook_response(
+        DraftSnapshot.model_validate(snapshot), f"Relay-DRX-{run_id}-v{revision}.xlsx"
     )

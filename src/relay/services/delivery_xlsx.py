@@ -128,7 +128,8 @@ def _production_sheet(sheet: Worksheet, draft: DraftSnapshot) -> None:
         sheet.cell(2, column, f'=YEAR({letter}3)&"W"&TEXT(WEEKNUM({letter}3,2),"00")')
         sheet.cell(3, column, ship_date).number_format = _DATE_FORMAT
         sheet.cell(4, column, "空运" if mode == "air" else "海运")
-        eta = sheet.cell(eta_row, column, override or f"={letter}3+{14 if mode == 'air' else 84}")
+        eta_formula = f"={letter}3+{draft.rule_parameters.days(mode)}"
+        eta = sheet.cell(eta_row, column, override or eta_formula)
         eta.number_format = _DATE_FORMAT
         sheet.cell(
             eta_row + 1,
@@ -147,7 +148,7 @@ def _source_sheet(sheet: Worksheet, draft: DraftSnapshot) -> None:
     _write_text(sheet, 2, 2, draft.document_no)
     sheet.append(["报文日期"])
     _write_text(sheet, 3, 2, draft.document_date)
-    sheet.append(["规则版本", draft.rule_version])
+    sheet.append(["规则版本", draft.rule_version, "输出模板版本", draft.output_version])
     headers = [
         "客户料号",
         "采购订单",

@@ -30,6 +30,20 @@ EntryReviewKind = Literal["code_review", "period_review"]
 EntryReviewAction = Literal["include", "exclude", "set_date", "keep_interval"]
 
 RULE_VERSION = "drx-2"
+DRX_OUTPUT_VERSION = "drx-production-1"
+
+
+class DeliveryLeadTimes(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    air_days: Annotated[int, Field(ge=0, le=365)] = 14
+    sea_days: Annotated[int, Field(ge=0, le=365)] = 84
+
+    def days(self, mode: Literal["air", "sea"]) -> int:
+        return self.air_days if mode == "air" else self.sea_days
+
+    def eta(self, ship_date: date, mode: Literal["air", "sea"]) -> date:
+        return ship_date + timedelta(days=self.days(mode))
 
 
 def matching_order(customer: Customer, order: str | None) -> str | None:
@@ -99,8 +113,8 @@ class ShipmentInput(BaseModel):
             raise ValueError("ETA is earlier than shipment")
         return self
 
-    def arrival(self) -> date:
-        return self.manual_eta or self.ship_date + timedelta(days=14 if self.mode == "air" else 84)
+    def arrival(self, parameters: DeliveryLeadTimes | None = None) -> date:
+        return self.manual_eta or (parameters or DeliveryLeadTimes()).eta(self.ship_date, self.mode)
 
 
 class Shipment(ShipmentInput):
@@ -162,6 +176,8 @@ class DraftMaterial(BaseModel):
 
 class DraftSnapshot(BaseModel):
     rule_version: str
+    rule_parameters: DeliveryLeadTimes = Field(default_factory=DeliveryLeadTimes)
+    output_version: str = DRX_OUTPUT_VERSION
     attachment_id: int
     mail_id: int
     filename: str

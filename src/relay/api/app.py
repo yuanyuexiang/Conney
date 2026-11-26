@@ -31,6 +31,8 @@ async def handle_validation_error(request: Request, error: RequestValidationErro
         return JSONResponse({"detail": "mailbox_invalid_fields"}, status_code=422)
     if request.url.path.startswith(("/api/v1/auth", "/api/v1/users")):
         return JSONResponse({"detail": "invalid_user_fields"}, status_code=422)
+    if request.url.path.startswith("/api/v1/templates"):
+        return JSONResponse({"detail": "invalid_rule_fields"}, status_code=422)
     if request.url.path.startswith(("/api/v1/material-mappings", "/api/v1/delivery")):
         return JSONResponse({"detail": "invalid_delivery_fields"}, status_code=422)
     return await request_validation_exception_handler(request, error)

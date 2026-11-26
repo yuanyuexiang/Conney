@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { messageOf, relayRequest } from "./relay-api";
 import { WorkbenchHeader, type WorkbenchHeading } from "./workbench-header";
 import { WorkbenchSelect } from "./workbench-select";
+import type { TemplateAttachment } from "./template-rules-api";
 import { chinaTime, formatSyncTime, type IntakeCounts, type MailboxStatus, type SyncView } from "./workbench-status";
 
 type MailState = "failed" | "review" | "queued" | "complete" | "archived";
@@ -34,6 +35,7 @@ type Attachment = {
   error_location: string | null;
   review_location: string | null;
   template: string | null;
+  parser_version: string | null;
 };
 type Quantity = {
   id: number;
@@ -236,9 +238,10 @@ function Diagnosis({ attachment }: { attachment: Attachment }) {
   );
 }
 
-function MailDetail({ mail, refreshKey, onDraftOpened }: {
+function MailDetail({ mail, refreshKey, onDraftOpened, onTemplate }: {
   mail: Mail; refreshKey: string;
   onDraftOpened?: (id: number) => void;
+  onTemplate: (source: TemplateAttachment) => void;
 }) {
   const [detail, setDetail] = useState<Detail>();
   const [selectedAttachment, setSelectedAttachment] = useState<number>();
@@ -312,7 +315,10 @@ function MailDetail({ mail, refreshKey, onDraftOpened }: {
               <div className="file-info">
                 <p className="filename">{attachment.filename}</p>
                 <p className="file-meta">
-                  {attachment.template ? (templateLabels[attachment.template] ?? attachment.template) : "附件"}
+                  {attachment.template ? <button type="button" className="archive-template-link" onClick={() => onTemplate({
+                    code: attachment.template!, attachmentId: attachment.id, filename: attachment.filename,
+                    parserVersion: attachment.parser_version, mailId: mail.id,
+                  })}>{templateLabels[attachment.template] ?? attachment.template}</button> : "附件"}
                   {attachment.size_bytes !== null && ` · ${Math.max(1, Math.ceil(attachment.size_bytes / 1024))} KB`}
                 </p>
               </div>
@@ -378,8 +384,9 @@ function ConnectMailbox({ sync, onConfigure }: { sync: SyncView; onConfigure?: (
   );
 }
 
-function ArchiveTable({ messages, emptyState, onSelect }: {
+function ArchiveTable({ messages, emptyState, onSelect, onTemplate }: {
   messages: Mail[]; emptyState: React.ReactNode; onSelect: (mail: Mail) => void;
+  onTemplate: (source: TemplateAttachment) => void;
 }) {
   return (
     <div className="table-scroll archive-table" tabIndex={0} role="region" aria-label="收件档案列表">
@@ -401,7 +408,10 @@ function ArchiveTable({ messages, emptyState, onSelect }: {
                 <time dateTime={mail.received_at}>{formatSyncTime(mail.received_at)}</time>
               </span>
             </td>
-            <td>{mail.templates.map((template) => templateLabels[template] ?? template).join("、") || "—"}</td>
+            <td>{mail.templates.length ? <div className="archive-template-links">{mail.templates.map((code) =>
+              <button type="button" className="archive-template-link" key={code} onClick={() => onTemplate({ code, mailId: mail.id })}>
+                {templateLabels[code] ?? code}
+              </button>)}</div> : "—"}</td>
             <td>{mail.attachment_count} 个</td>
             <td><time dateTime={mail.received_at}>{chinaTime.format(new Date(mail.received_at))}</time></td>
             <td><Status state={mail.state} /></td>
@@ -442,7 +452,7 @@ function MailSearch({ value, onChange }: { value: string; onChange: (value: stri
 }
 
 export function IntakeWorkspace({ heading, counts, mailbox, sync, revision, refresh, onConfigure,
-  onDraftOpened, initialMailId, initialFilter }: {
+  onDraftOpened, onTemplate, initialMailId, initialFilter }: {
   heading: WorkbenchHeading;
   counts: IntakeCounts | undefined;
   mailbox: MailboxStatus | null | undefined;
@@ -451,6 +461,7 @@ export function IntakeWorkspace({ heading, counts, mailbox, sync, revision, refr
   refresh: () => void;
   onConfigure?: () => void;
   onDraftOpened?: (id: number) => void;
+  onTemplate: (source: TemplateAttachment) => void;
   initialMailId?: number;
   initialFilter: MailFilter;
 }) {
@@ -569,7 +580,7 @@ export function IntakeWorkspace({ heading, counts, mailbox, sync, revision, refr
           <ArrowLeftOutlined aria-hidden="true" /> 返回档案
         </button>
         <div className="archive-detail">
-          <MailDetail key={selection.id} mail={selection} refreshKey={refreshKey} onDraftOpened={onDraftOpened} />
+          <MailDetail key={selection.id} mail={selection} refreshKey={refreshKey} onDraftOpened={onDraftOpened} onTemplate={onTemplate} />
         </div>
       </> : onboarding ? <ConnectMailbox sync={sync} onConfigure={onConfigure} /> : (
         <section className="archive-surface" aria-label="归档邮件查询">
@@ -584,7 +595,7 @@ export function IntakeWorkspace({ heading, counts, mailbox, sync, revision, refr
             />
             <span className="archive-count" role="status">{countLabel}</span>
           </div>
-          <ArchiveTable messages={rows} emptyState={tableMessage} onSelect={setSelection} />
+          <ArchiveTable messages={rows} emptyState={tableMessage} onSelect={setSelection} onTemplate={onTemplate} />
           {pager}
         </section>
       )}

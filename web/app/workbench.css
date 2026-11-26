@@ -56,9 +56,10 @@
 .account-menu-info { display: grid; gap: .12rem; max-width: 205px; padding-bottom: .45rem; border-bottom: 1px solid var(--border); }
 .account-menu-info strong { overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }
 .account-menu-info span { color: var(--muted); font-size: .78rem; }
-.account-dialog-body .account-form label { display: grid; gap: .37rem; color: var(--ink); font-size: .87rem; font-weight: 620; }
-.account-dialog-body .account-form label > input {
+:is(.account-dialog-body .account-form, .rule-trial-form) label { display: grid; gap: .37rem; color: var(--ink); font-size: .87rem; font-weight: 620; }
+:is(.account-dialog-body .account-form, .rule-trial-form) label > input {
   width: 100%;
+  min-width: 0;
   min-height: 41px;
   padding: .48rem .65rem;
   border: 1px solid #cbd8e3;
@@ -67,7 +68,7 @@
   color: var(--ink);
   font-size: 1rem;
 }
-.account-dialog-body .account-form .workbench-select { --workbench-select-height: 41px; font-size: 1rem; }
+:is(.account-dialog-body .account-form, .rule-trial-form) .workbench-select { --workbench-select-height: 41px; font-size: 1rem; }
 
 .workbench-select.ant-select {
   width: 100%;

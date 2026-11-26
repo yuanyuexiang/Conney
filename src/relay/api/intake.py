@@ -47,6 +47,7 @@ class AttachmentSummary(BaseModel):
     error_reason: str | None
     review_location: str | None
     template: str | None
+    parser_version: str | None
 
 
 class MailDetail(BaseModel):
@@ -196,7 +197,7 @@ def email_detail(mail_id: int, _: SignedInUser) -> MailDetail:
                 text(
                     "SELECT att.id, att.filename, att.intake_state, blob.size_bytes, "
                     "job.state AS job_state, job.error_code, job.error_reason, job.error_location, "
-                    "run.template, "
+                    "run.template, run.parser_version, "
                     "review.location AS review_location "
                     f"{_ATTACHMENT_ROWS} "
                     "LEFT JOIN archive_objects AS blob ON blob.sha256 = att.sha256 "

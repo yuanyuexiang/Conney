@@ -15,16 +15,13 @@ import { messageOf, relayRequest, RelayRequestError } from "./relay-api";
 import { WorkbenchHeader, type WorkbenchHeading } from "./workbench-header";
 import { WorkbenchSelect } from "./workbench-select";
 import { chinaTime } from "./workbench-status";
+import { RuleImpactView } from "./template-rules";
+import type { DeliveryLeadTimes, DraftRuleHistory, DraftRulePreview } from "./template-rules-api";
 
 type GridMode = "demand" | "shipment";
 type Mode = GridMode | "review";
 type Selection = { materialId: number; entryIds: number[]; label: string };
 type ReviewGroup = { key: string; entries: { material: Material; entry: Entry }[] };
-
-const shipmentModes: { value: Shipment["mode"]; label: string }[] = [
-  { value: "air", label: "空运 · 14 天" },
-  { value: "sea", label: "海运 · 84 天" },
-];
 
 function periodKey(entry: Entry, mode: GridMode) {
   if (mode === "demand") return entry.period;
@@ -129,8 +126,9 @@ function DeliveryGrid({ draft, mode, onSelect }: {
   </>);
 }
 
-function ShipmentForm({ entry, busy, error, onSave, onClose }: {
+function ShipmentForm({ entry, parameters, busy, error, onSave, onClose }: {
   entry: Entry;
+  parameters: DeliveryLeadTimes;
   busy: boolean;
   error: string;
   onSave: (shipment: object | null) => void;
@@ -140,6 +138,10 @@ function ShipmentForm({ entry, busy, error, onSave, onClose }: {
   const [missingMode, setMissingMode] = useState(false);
   const modeRef = useRef<RefSelectProps>(null);
   const modeErrorId = useId();
+  const shipmentModes: { value: Shipment["mode"]; label: string }[] = [
+    { value: "air", label: `空运 · ${parameters.air_days} 天` },
+    { value: "sea", label: `海运 · ${parameters.sea_days} 天` },
+  ];
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -267,6 +269,9 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [reload, setReload] = useState(0);
+  const [rulePanel, setRulePanel] = useState<{ preview: DraftRulePreview | null; history: DraftRuleHistory[] }>();
+  const [ruleBusy, setRuleBusy] = useState<"read" | "apply">();
+  const [ruleError, setRuleError] = useState("");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -341,6 +346,39 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
     }
   }
 
+  async function openRulePanel() {
+    if (ruleBusy) return;
+    setRuleError("");
+    setRuleBusy("read");
+    try {
+      const [history, preview] = await Promise.all([
+        relayRequest<DraftRuleHistory[]>(`/delivery/${id}/rule-history`),
+        admin ? relayRequest<DraftRulePreview | null>(`/delivery/${id}/rule-preview`) : null,
+      ]);
+      setRulePanel({ history, preview });
+    } catch (reason) {
+      setError(messageOf(reason));
+    } finally { setRuleBusy(undefined); }
+  }
+
+  async function adoptRule() {
+    const preview = rulePanel?.preview;
+    if (!preview || ruleBusy || busy) return;
+    setRuleError("");
+    setRuleBusy("apply");
+    try {
+      const updated = await relayRequest<DeliveryDraft>(`/delivery/${id}/apply-rule`, {
+        method: "POST", body: JSON.stringify({ revision: preview.revision, target_id: preview.target.id }),
+      });
+      setDetail(updated);
+      onChange(updated);
+      setRulePanel(undefined);
+    } catch (reason) {
+      setRuleError(messageOf(reason));
+      if (reason instanceof RelayRequestError && reason.status === 409) setReload((value) => value + 1);
+    } finally { setRuleBusy(undefined); }
+  }
+
   function show(selection: Selection) {
     setShipmentId(undefined);
     setShipmentError("");
@@ -390,6 +428,8 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
                 <FileExcelOutlined aria-hidden="true" /> {detail.filename}
               </button>
               <span>{shortDate(detail.document_date)}</span>
+              <button type="button" className="text-button" disabled={busy || Boolean(ruleBusy)}
+                onClick={() => void openRulePanel()}>规则 {detail.rule_version}</button>
             </div>
           </>
         ) : <h2>交付草稿</h2>}
@@ -510,7 +550,8 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
                   <div><dt>数量类型 / 状态</dt><dd>{entry.code ?? "—"} / {entry.status_code ?? "—"}</dd></div>
                   {entry.shipment && <>
                     <div><dt>发货日 / 运输</dt><dd>{entry.shipment.ship_date} · {entry.shipment.mode === "air" ? "空运" : "海运"}</dd></div>
-                    <div><dt>ETA</dt><dd>{entry.eta}（{entry.shipment.manual_eta ? "人工填报" : entry.shipment.mode === "air" ? "发货日 + 14 天" : "发货日 + 84 天"}）</dd></div>
+                    <div><dt>ETA</dt><dd>{entry.eta}（{entry.shipment.manual_eta ? "人工填报" :
+                      `发货日 + ${entry.shipment.mode === "air" ? detail?.rule_parameters.air_days : detail?.rule_parameters.sea_days} 天`}）</dd></div>
                     <div><dt>发货依据</dt><dd>{entry.shipment.source_note} · {entry.shipment.entered_by}</dd></div>
                   </>}
                 </dl>
@@ -524,7 +565,7 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
                   }}>{entry.review ? "修改核对结论" : kind === "code_review" ? "确认报文代码" :
                     entry.state === "confirmed_interval" ? "补充具体交货日" : "核对日期区间"}</button>)}
                 {admin && reviewId !== entry.id && material.mapping_state === "matched" && (entry.state === "scheduled" || entry.state === "transport_missing") &&
-                  (shipmentId === entry.id ? <ShipmentForm entry={entry} busy={busy} error={shipmentError}
+                  (shipmentId === entry.id && detail ? <ShipmentForm entry={entry} parameters={detail.rule_parameters} busy={busy} error={shipmentError}
                     onClose={() => setShipmentId(undefined)}
                     onSave={(shipment) => void update(`shipments/${entry.id}`, "PUT", { shipment }, "shipment")} />
                     : <button type="button" className="button" disabled={busy} onClick={() => {
@@ -535,6 +576,28 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
           })}
         </>}
       </Drawer>
+      {rulePanel && detail && <Modal open centered width={720} title="草稿规则版本"
+        footer={<>
+          <button type="button" className="button" disabled={ruleBusy === "apply"} onClick={() => setRulePanel(undefined)}>关闭</button>
+          {rulePanel.preview && <button type="button" className="button primary-button" disabled={Boolean(ruleBusy) || busy}
+            onClick={() => void adoptRule()}>{ruleBusy === "apply" ? "正在生成…" : "采用新版并生成草稿新版本"}</button>}
+        </>} mask={{ closable: false }} closable={ruleBusy !== "apply"} keyboard={ruleBusy !== "apply"}
+        onCancel={() => setRulePanel(undefined)}>
+        <p>草稿版本 {detail.revision} · 规则 {detail.rule_version} · 输出模板 {detail.output_version}</p>
+        <p className="field-hint">空运 {detail.rule_parameters.air_days} 天 · 海运 {detail.rule_parameters.sea_days} 天</p>
+        {rulePanel.preview ? <>
+          <h3>生效规则 {rulePanel.preview.target.version}</h3>
+          <p className="field-hint">空运 {rulePanel.preview.target.parameters.air_days} 天 · 海运 {rulePanel.preview.target.parameters.sea_days} 天</p>
+          <RuleImpactView impact={rulePanel.preview.impact} />
+        </> : admin && <p className="field-hint">当前草稿已使用生效版本。</p>}
+        {rulePanel.history.length > 0 && <ul className="rule-version-list" aria-label="草稿历史规则版本">
+          {rulePanel.history.map(item => <li key={item.revision}>
+            <div>草稿版本 {item.revision} · 规则 {item.rule_version}<p>{chinaTime.format(new Date(item.replaced_at))}</p></div>
+            <a className="button" href={`/api/v1/delivery/${id}/rule-history/${item.revision}/draft.xlsx`}>下载历史草稿</a>
+          </li>)}
+        </ul>}
+        {ruleError && <p className="notice failed" role="alert">{ruleError}</p>}
+      </Modal>}
       {batchReview && <Modal title={`批量确认 ${batchReview.entries.length} 条报文记录`} open width={480} footer={null}
         mask={{ closable: false }} closable={!busy} keyboard={!busy}
         onCancel={() => { if (!busy) setBatchReview(undefined); }}>
