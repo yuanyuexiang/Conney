@@ -2,7 +2,7 @@
 
 import {
   ApiOutlined, ArrowRightOutlined, CloudDownloadOutlined, DatabaseOutlined, FileExcelOutlined,
-  HddOutlined, MailOutlined, ReloadOutlined, UnorderedListOutlined,
+  HddOutlined, MailOutlined, ReloadOutlined, SendOutlined, UnorderedListOutlined,
 } from "@ant-design/icons";
 import { useEffect, useState, type ReactNode } from "react";
 import { relayRequest } from "./relay-api";
@@ -24,6 +24,7 @@ type Operations = {
   checked_at: string;
   mail_worker: Worker;
   parser_worker: Worker;
+  delivery_worker: Worker;
   mailbox: (MailboxStatus & { poll_minutes: number }) | null;
   parsing: Parsing;
   archive: { state: "empty" | "verified" | "unavailable" | "damaged" };
@@ -151,8 +152,9 @@ export function SystemStatus({ heading, onConfigure, onViewParsingMail }: {
   const parsing = report?.parsing;
   const mailWorkerBadge = report ? workerBadges[report.mail_worker.state] : unread;
   const parserWorkerBadge = report ? workerBadges[report.parser_worker.state] : unread;
+  const deliveryWorkerBadge = report?.delivery_worker ? workerBadges[report.delivery_worker.state] : unread;
   const workloadBadge = parsingBadge(parsing);
-  const signals = [apiBadge, databaseBadge, mailWorkerBadge, parserWorkerBadge, mailboxBadge, workloadBadge, archive ?? unread];
+  const signals = [apiBadge, databaseBadge, mailWorkerBadge, parserWorkerBadge, deliveryWorkerBadge, mailboxBadge, workloadBadge, archive ?? unread];
 
   const summary: Badge = !snapshot
     ? { tone: "checking", label: "正在检查系统" }
@@ -191,6 +193,9 @@ export function SystemStatus({ heading, onConfigure, onViewParsingMail }: {
           </StatusCard>
           <StatusCard title="解析进程" icon={<FileExcelOutlined aria-hidden="true" />} badge={parserWorkerBadge}>
             {heartbeatDetail(report?.parser_worker)}
+          </StatusCard>
+          <StatusCard title="发件进程" icon={<SendOutlined aria-hidden="true" />} badge={deliveryWorkerBadge}>
+            {heartbeatDetail(report?.delivery_worker)}
           </StatusCard>
         </div>
       </section>

@@ -4,7 +4,8 @@ import {
   ArrowLeftOutlined, DeleteOutlined, DownloadOutlined, FileExcelOutlined, ReloadOutlined,
 } from "@ant-design/icons";
 import { Drawer, Modal, type RefSelectProps } from "antd";
-import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { DeliveryDispatchActions } from "./delivery-dispatch";
 import {
   addQuantities, entryLabels, entryReviewReason, mappingLabels, needsReview, reviewLabels, shortDate,
   type DeliveryDraft, type Entry, type Material, type ReviewAction, type ReviewInput, type ReviewKind,
@@ -269,6 +270,8 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [reload, setReload] = useState(0);
+  const [releaseExists, setReleaseExists] = useState(false);
+  const reloadDraft = useCallback(() => setReload(value => value + 1), []);
   const [rulePanel, setRulePanel] = useState<{ preview: DraftRulePreview | null; history: DraftRuleHistory[] }>();
   const [ruleBusy, setRuleBusy] = useState<"read" | "apply">();
   const [ruleError, setRuleError] = useState("");
@@ -413,14 +416,16 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
                 <h2>交付草稿 <span className="delivery-badge review">版本 {detail.revision}</span></h2>
               </div>
               <div className="delivery-detail-actions">
-                {admin && <button type="button" className="button delivery-delete-button" aria-haspopup="dialog"
+                {admin && !releaseExists && <button type="button" className="button delivery-delete-button" aria-haspopup="dialog"
                   disabled={downloading || busy || deleting} onClick={() => {
                     setDeleteError("");
                     setDeleteRevision(detail.revision);
                   }}><DeleteOutlined aria-hidden="true" /> 删除草稿</button>}
-                <button type="button" className="button primary-button" disabled={downloading || busy} onClick={() => void download()}>
+                <button type="button" className="button" disabled={downloading || busy} onClick={() => void download()}>
                   <DownloadOutlined aria-hidden="true" /> {downloading ? "正在生成…" : "下载草稿"}
                 </button>
+                <DeliveryDispatchActions draft={detail} admin={admin} disabled={busy || deleting}
+                  onFix={setMode} onStale={reloadDraft} onReleaseExists={setReleaseExists} />
               </div>
             </div>
             <div className="delivery-meta">

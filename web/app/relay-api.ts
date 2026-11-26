@@ -11,6 +11,36 @@ export type User = {
 export const roleLabels: Record<Role, string> = { admin: "管理员", viewer: "查询用户" };
 
 const messages: Record<string, string> = {
+  draft_has_confirmed_release: "该批次已有确认版，需要保留草稿及版本记录。",
+  release_already_confirmed: "当前草稿版本已确认，请查看确认版本。",
+  release_has_blockers: "本次交付仍有待解决事项，请重新核验。",
+  release_dispatch_in_progress: "上一确认版还有待发送邮件，请等待发送结束。",
+  release_superseded: "此版本已有更新的确认版，请重新打开确认版本。",
+  release_not_found: "没有找到确认版。",
+  release_workbook_too_large: "交付文件超过 10 MB，无法作为邮件确认版保存。",
+  release_workbook_damaged: "归档附件校验失败，请检查确认版文件。",
+  dispatch_invalid_fields: "请检查邮箱地址、发件服务器、内域或邮件内容。",
+  dispatch_address_not_allowed: "收件地址超出当前发件设置允许的范围。",
+  dispatch_group_exists: "已存在同名部门收件组。",
+  dispatch_groups_changed: "可用部门收件组已变化，请刷新后核对地址。",
+  dispatch_recipients_changed: "待发送的实际地址已变化，请刷新后核对。",
+  dispatch_no_recipients: "没有可发送的地址，请查看发送记录。",
+  dispatch_request_conflict: "发送请求已存在，请查看发送记录后重试。",
+  dispatch_not_found: "没有找到该发送记录。",
+  dispatch_storage_unavailable: "发件配置读取失败，本次邮件尚未提交。",
+  outgoing_not_configured: "请先保存发件配置。",
+  outgoing_credential_required: "新增或更换发件账号时，请填写授权码。",
+  outgoing_not_verified: "请在邮箱配置完成 SMTP 登录测试。",
+  outgoing_changed: "发件配置已变化，请核对设置后重新提交。",
+  outgoing_sender_changed: "当前发件邮箱与原邮件不同，无法直接补发。",
+  smtp_auth_failed: "SMTP 登录失败，请核对发件账号、客户端授权码和权限。",
+  smtp_tls_failed: "SMTP 的 TLS 证书验证失败。",
+  smtp_unreachable: "无法连接发件服务器。",
+  smtp_sender_rejected: "邮件服务器拒绝了发件地址。",
+  smtp_recipient_rejected: "邮件服务器拒绝了该收件地址。",
+  smtp_message_rejected: "邮件服务器拒绝了邮件正文或附件。",
+  smtp_acceptance_unknown: "提交邮件时连接中断，请在邮箱侧核实。",
+  smtp_worker_interrupted: "发件过程被中断，请在邮箱侧核实。",
   invalid_login: "用户名或密码不正确，或账号已停用。",
   invalid_user_fields: "请检查用户名格式。新密码须为 8 至 128 个字符。",
   invalid_rule_fields: "请填写试算附件、发货日、运输天数和业务依据。运输天数须为 0 至 365 的整数。",
@@ -55,7 +85,7 @@ const messages: Record<string, string> = {
 };
 
 export class RelayRequestError extends Error {
-  constructor(public status: number, code: string) {
+  constructor(public status: number, public code: string) {
     super(status === 429 ? "登录尝试过于频繁，请稍后重试。" : messages[code] ?? "操作未成功，请稍后重试。");
   }
 }

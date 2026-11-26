@@ -257,10 +257,20 @@ def _source_sheet(sheet: Worksheet, draft: DraftSnapshot) -> None:
     sheet.column_dimensions["Y"].width = 26
 
 
-def build_workbook(draft: DraftSnapshot) -> bytes:
+def build_workbook(
+    draft: DraftSnapshot, *, release_version: int | None = None, ship_through: date | None = None
+) -> bytes:
     workbook = Workbook()
-    _production_sheet(workbook["Sheet"], draft)
-    _source_sheet(workbook.create_sheet("需求与来源"), draft)
+    production = workbook["Sheet"]
+    _production_sheet(production, draft)
+    source = workbook.create_sheet("需求与来源")
+    _source_sheet(source, draft)
+    if release_version is not None:
+        production["A1"] = f"德科交付计划 · V{release_version}"
+        source["E4"] = "确认版本"
+        source["F4"] = release_version
+        source["G4"] = "核验交货截至日"
+        source["H4"] = ship_through
     with BytesIO() as content:
         workbook.save(content)
         return content.getvalue()

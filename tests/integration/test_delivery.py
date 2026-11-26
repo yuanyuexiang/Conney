@@ -1,12 +1,16 @@
 import os
+import smtplib
 from collections.abc import Callable
 from datetime import UTC, datetime
+from email import message_from_bytes, policy
 from email.message import EmailMessage
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
+from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from openpyxl import Workbook, load_workbook
 from sqlalchemy import text
@@ -14,8 +18,10 @@ from sqlalchemy import text
 from relay.api.app import app
 from relay.auth.accounts import Role, User
 from relay.database.session import get_engine
+from relay.mail.configuration import get_mail_settings
 from relay.mail.intake import MailIdentity, receive
 from relay.storage.archive import Archive
+from relay.workers import delivery as delivery_worker
 from relay.workers.import_materials import import_directory
 from relay.workers.parser import process_one
 
@@ -117,6 +123,7 @@ def _remove_test_delivery(mail_id: int, item: str) -> None:
         jobs = f"SELECT id FROM parse_jobs WHERE attachment_id IN ({attachments})"
         runs = f"SELECT id FROM parse_runs WHERE job_id IN ({jobs})"
         blocks = f"SELECT id FROM parsed_material_blocks WHERE run_id IN ({runs})"
+        releases = f"SELECT id FROM delivery_releases WHERE run_id IN ({runs})"
         hashes = (
             connection.execute(
                 text("SELECT sha256 FROM received_attachments WHERE mail_id = :mail_id"), params
@@ -125,6 +132,9 @@ def _remove_test_delivery(mail_id: int, item: str) -> None:
             .all()
         )
         for statement in (
+            f"DELETE FROM delivery_dispatch_recipients WHERE release_id IN ({releases})",
+            f"DELETE FROM delivery_dispatches WHERE release_id IN ({releases})",
+            f"DELETE FROM delivery_releases WHERE run_id IN ({runs})",
             f"DELETE FROM delivery_draft_rule_history WHERE run_id IN ({runs})",
             f"DELETE FROM delivery_drafts WHERE run_id IN ({runs})",
             f"DELETE FROM parsed_quantity_records WHERE block_id IN ({blocks})",
@@ -547,3 +557,303 @@ def test_delivery_draft_from_archive_to_generation(
                 manager.post(source_url, headers=_BROWSER).json()["rule_version"]
                 == trial["version"]
             )
+
+
+@pytest.mark.skipif(os.environ.get("RELAY_TEST_DB") != "1", reason="Requires test PostgreSQL")
+def test_confirmed_delivery_sends_same_workbook_with_recipient_results(
+    tmp_path: Path,
+    signed_in: Callable[[TestClient, Role], User],
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    item = "00" + uuid4().hex[:8]
+    workbook = Workbook()
+    for row in [
+        ["DRX-DELFOR-长期交付预测"],
+        ["DelforNo", "000261", "DelforCreateDate", "20261122"],
+        ["poNo", "42", "BuyerItemNo", item],
+        [
+            "DeliveryPlanStatusIndicator",
+            "QtyType",
+            "Qty",
+            "QtyUnit",
+            "RequestedDeliveryDate",
+            "HorizonStartDate",
+            "HorizonEndDate",
+        ],
+        ["1", "1", "800", "C62", "20261127"],
+        ["1", "1", "900", "C62", "20261218"],
+    ]:
+        workbook.active.append(row)
+    content = BytesIO()
+    workbook.save(content)
+    mail = EmailMessage()
+    mail["From"] = "sanitized@example.com"
+    mail["Subject"] = "Delivery dispatch test"
+    mail.set_content("Sanitized attachment")
+    mail.add_attachment(
+        content.getvalue(),
+        maintype="application",
+        subtype="octet-stream",
+        filename="dispatch.xlsx",
+    )
+    archive = Archive(tmp_path / "archive")
+    monkeypatch.setenv("RELAY_ARCHIVE_DIR", str(archive.root))
+    monkeypatch.setenv("RELAY_MAIL_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    get_mail_settings.cache_clear()
+    request.addfinalizer(get_mail_settings.cache_clear)
+    receipt = receive(
+        mail.as_bytes(),
+        MailIdentity(f"test:{item}", "INBOX", 1, 1, datetime.now(UTC)),
+        archive,
+    )
+    request.addfinalizer(lambda: _remove_test_delivery(receipt.mail_id, item))
+    assert process_one(archive)
+
+    smtp = MagicMock()
+    smtp.mail.return_value = (250, b"Accepted sender")
+    smtp.rcpt.side_effect = [(250, b"ok"), (550, b"rejected"), (250, b"ok"), (250, b"ok")]
+    smtp.data.side_effect = [(250, b"ok"), smtplib.SMTPServerDisconnected(), (250, b"ok")]
+    connector = MagicMock(return_value=smtp)
+    monkeypatch.setattr(smtplib, "SMTP_SSL", connector)
+    group_ids: list[int] = []
+    smtp_address = f"qa-{uuid4().hex[:8]}@example.com"
+    test_sender = f"qa-{uuid4().hex[:8]}@163.com"
+
+    def remove_outgoing() -> None:
+        with get_engine().begin() as connection:
+            connection.execute(
+                text("DELETE FROM delivery_recipient_groups WHERE id = ANY(:group_ids)"),
+                {"group_ids": group_ids},
+            )
+            connection.execute(
+                text("DELETE FROM outgoing_mailbox WHERE address = ANY(:addresses)"),
+                {"addresses": [smtp_address, test_sender]},
+            )
+
+    request.addfinalizer(remove_outgoing)
+    with TestClient(app, headers=_BROWSER) as admin, TestClient(app, headers=_BROWSER) as viewer:
+        signed_in(admin, "admin")
+        signed_in(viewer, "viewer")
+        attachments = admin.get(f"/api/v1/intake/emails/{receipt.mail_id}").json()["attachments"]
+        draft = admin.post(f"/api/v1/delivery/attachments/{attachments[0]['id']}").json()
+        path = f"/api/v1/delivery/{draft['id']}"
+        releases = f"{path}/releases"
+        release_input = {"revision": draft["revision"], "ship_through": "2026-11-27"}
+        first_preview = admin.get(f"{path}/release-preview", params=release_input).json()
+        assert first_preview["pending_mappings"] == first_preview["pending_shipments"] == 1
+        assert first_preview["future_unscheduled"] == 1
+        assert first_preview["blockers"][1]["cell"] == "Sheet!C5"
+        assert admin.post(releases, json=release_input).json()["detail"] == "release_has_blockers"
+        mapping = admin.post(
+            "/api/v1/material-mappings",
+            json={
+                "customer": "drx",
+                "customer_item": item,
+                "order_no": "42",
+                "internal_item": "00024",
+            },
+        )
+        assert mapping.status_code == 201
+        refreshed = admin.post(f"{path}/refresh", json={"revision": draft["revision"]}).json()
+        first_entry = refreshed["materials"][0]["entries"][0]
+        shipment_url = f"{path}/shipments/{first_entry['id']}"
+        shipment = {"mode": "air", "ship_date": "2026-11-10", "source_note": "QA"}
+        arranged = admin.put(
+            shipment_url,
+            json={
+                "revision": refreshed["revision"],
+                "shipment": shipment,
+            },
+        )
+        assert arranged.status_code == 200, arranged.text
+        release_input["revision"] = arranged.json()["revision"]
+        assert viewer.post(releases, json=release_input).status_code == 403
+        confirmed = admin.post(releases, json=release_input)
+        assert confirmed.status_code == 201, confirmed.text
+        v1 = confirmed.json()
+        assert admin.post(releases, json=release_input).json() == v1
+        assert v1["version"] == 1 and v1["rule_version"] == "drx-2"
+        assert v1["filename"] == "德科交付计划_报文000261_V1.xlsx"
+        frozen_url = f"{releases}/1/workbook.xlsx"
+        frozen = viewer.get(frozen_url)
+        assert (
+            frozen.status_code == 200 and "filename*=UTF-8" in frozen.headers["content-disposition"]
+        )
+        xlsx = load_workbook(BytesIO(frozen.content))
+        assert xlsx["给生产"]["A1"].value == "德科交付计划 · V1"
+        assert xlsx["给生产"]["L5"].value == 800
+        assert xlsx["需求与来源"]["D7"].value == "900"
+        assert admin.delete(path, params={"revision": release_input["revision"]}).status_code == 409
+
+        settings_url = "/api/v1/mailbox/outgoing"
+        groups_url = "/api/v1/mailbox/recipient-groups"
+        payload = {
+            "address": smtp_address,
+            "host": "smtp.263.net",
+            "domains": ["example.com"],
+            "password": "qa-only-smtp-secret",
+        }
+        assert viewer.put(settings_url, json=payload).status_code == 403
+        assert admin.get(settings_url).json() is None
+        settings = admin.put(settings_url, json=payload)
+        assert settings.status_code == 200, settings.text
+        assert payload["password"] not in settings.text
+        assert admin.post(f"{settings_url}/connection-test").json() == {"result": "ok"}
+        smtp.login.assert_called_with(smtp_address, payload["password"])
+        assert connector.call_args.args == ("smtp.263.net", 465)
+        bad_group = admin.post(
+            groups_url,
+            json={
+                "name": "外部",
+                "addresses": ["outside@example.org"],
+            },
+        )
+        assert bad_group.json()["detail"] == "dispatch_address_not_allowed"
+        addresses = [f"{letter}@example.com" for letter in "abc"]
+        for name, members in (("QA 部门 A", addresses[:2]), ("QA 部门 B", addresses[1:])):
+            result = admin.post(groups_url, json={"name": name, "addresses": members})
+            assert result.status_code == 201, result.text
+            group_ids.append(result.json()["id"])
+
+        dispatches = f"{releases}/1/dispatches"
+        options = admin.get(f"{dispatches}/options").json()
+        assert options["verified"] is True
+        assert viewer.get(dispatches).status_code == 403
+        values = {
+            "request_id": str(uuid4()),
+            "mailbox_revision": options["mailbox_revision"],
+            "group_ids": group_ids,
+            "addresses": addresses,
+            "subject": "德科交付计划 · V1",
+            "body": "请查收确认版。",
+        }
+        mismatched = admin.post(dispatches, json={**values, "addresses": addresses[:1]})
+        assert mismatched.json()["detail"] == "dispatch_recipients_changed"
+        queued = admin.post(dispatches, json=values)
+        assert queued.status_code == 202, queued.text
+        assert admin.post(dispatches, json=values).json()["id"] == queued.json()["id"]
+        assert (
+            admin.post(
+                dispatches,
+                json={
+                    **values,
+                    "request_id": str(uuid4()),
+                },
+            ).json()["detail"]
+            == "dispatch_no_recipients"
+        )
+
+        changed = admin.put(
+            shipment_url,
+            json={
+                "revision": release_input["revision"],
+                "shipment": {**shipment, "manual_eta": "2026-11-25"},
+            },
+        ).json()
+        v2_input = {**release_input, "revision": changed["revision"]}
+        assert (
+            admin.post(releases, json=v2_input).json()["detail"] == "release_dispatch_in_progress"
+        )
+        assert delivery_worker.process_one()
+        assert delivery_worker.process_one()
+        assert delivery_worker.process_one()
+        assert not delivery_worker.process_one()
+        result = admin.get(dispatches).json()[0]
+        assert [
+            (item["address"], item["state"], item["retryable"]) for item in result["recipients"]
+        ] == [
+            (addresses[0], "accepted", False),
+            (addresses[1], "failed", True),
+            (addresses[2], "uncertain", False),
+        ]
+        message = message_from_bytes(smtp.data.call_args_list[0].args[0], policy=policy.default)
+        (attachment,) = message.iter_attachments()
+        assert attachment.get_filename() == v1["filename"]
+        assert attachment.get_payload(decode=True) == frozen.content
+        assert str(message["To"]) == addresses[0]
+
+        retry_path = f"{dispatches}/{result['id']}/retry"
+        retry = {
+            "request_id": str(uuid4()),
+            "mailbox_revision": options["mailbox_revision"],
+            "addresses": [addresses[1]],
+        }
+        assert (
+            admin.post(
+                retry_path,
+                json={
+                    **retry,
+                    "addresses": addresses[1:],
+                },
+            ).json()["detail"]
+            == "dispatch_recipients_changed"
+        )
+        retry_response = admin.post(retry_path, json=retry)
+        assert retry_response.status_code == 202, retry_response.text
+        assert delivery_worker.process_one()
+        assert not delivery_worker.process_one()
+        history = admin.get(dispatches).json()
+        assert history[0]["recipients"][0]["state"] == "accepted"
+        assert history[1]["recipients"][1]["retryable"] is False
+        v2 = admin.post(releases, json=v2_input)
+        assert v2.status_code == 201, v2.text
+        assert v2.json()["version"] == 2
+        assert viewer.get(frozen_url).content == frozen.content
+        assert viewer.get(f"{releases}/2/workbook.xlsx").content != frozen.content
+        assert admin.post(dispatches, json=values).json()["detail"] == "release_superseded"
+        second_send = admin.post(
+            f"{releases}/2/dispatches",
+            json={
+                **values,
+                "request_id": str(uuid4()),
+                "addresses": addresses[:2],
+                "group_ids": group_ids[:1],
+            },
+        )
+        assert second_send.status_code == 202, second_send.text
+        assert second_send.json()["body"].startswith("本邮件附件 V2 替代 V1")
+        test_settings = {
+            "address": test_sender,
+            "host": "smtp.163.com",
+            "domains": [],
+            "password": "qa-163-smtp-secret",
+            "test_recipient": addresses[2],
+        }
+        assert (
+            admin.put(settings_url, json={**test_settings, "test_recipient": None}).status_code
+            == 422
+        )
+        assert admin.put(settings_url, json=test_settings).status_code == 200
+        assert admin.post(f"{settings_url}/connection-test").json() == {"result": "ok"}
+        assert connector.call_args.args == ("smtp.163.com", 465)
+        assert (
+            admin.post(groups_url, json={"name": "非测试地址", "addresses": addresses}).status_code
+            == 422
+        )
+        test_group = admin.post(groups_url, json={"name": "测试地址", "addresses": [addresses[2]]})
+        assert test_group.status_code == 201, test_group.text
+        group_ids.append(test_group.json()["id"])
+        v2_dispatches = f"{releases}/2/dispatches"
+        test_options = admin.get(f"{v2_dispatches}/options").json()
+        assert (
+            test_options["test_mode"]
+            and [entry["id"] for entry in test_options["groups"]] == group_ids[-1:]
+        )
+        first_id = second_send.json()["recipients"][0]["id"]
+        with get_engine().begin() as connection:
+            connection.execute(
+                text("""
+                UPDATE delivery_dispatch_recipients SET state = 'sending', lease_until = now()
+                WHERE id = :id
+            """),
+                {"id": first_id},
+            )
+        assert delivery_worker.process_one()
+        assert not delivery_worker.process_one()
+        updated_dispatch = admin.get(v2_dispatches).json()[0]
+        assert [(entry["state"], entry["detail"]) for entry in updated_dispatch["recipients"]] == [
+            ("uncertain", "smtp_worker_interrupted"),
+            ("failed", "outgoing_changed"),
+        ]
+        assert smtp.data.call_count == 3

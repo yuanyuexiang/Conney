@@ -7,7 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from relay.database.session import get_engine
 
-WorkerName = Literal["mail", "parser"]
+WorkerName = Literal["mail", "parser", "delivery"]
 HEARTBEAT_STALE_SECONDS = 75
 _REPORT_INTERVAL = 15
 _LOG = logging.getLogger(__name__)

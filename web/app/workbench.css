@@ -285,6 +285,7 @@
 .intake-attachment .attachment-card { flex-wrap: wrap; padding: 0; border: 0; background: transparent; }
 .attachment-actions { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: .7rem; }
 .attachment-actions .button { min-height: 33px; }
+.attachment-output-status { margin-top: .65rem; }
 .diagnosis { padding: .7rem .8rem; margin-top: .75rem; border-radius: 6px; font-size: .85rem; line-height: 1.5; }
 .diagnosis.review { background: #fff5e0; color: #765008; }
 .diagnosis.failed { background: #fdf0ed; color: #8d302a; }

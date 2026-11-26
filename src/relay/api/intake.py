@@ -46,6 +46,7 @@ class AttachmentSummary(BaseModel):
     error_location: str | None
     error_reason: str | None
     review_location: str | None
+    review_date_code: str | None
     template: str | None
     parser_version: str | None
 
@@ -69,14 +70,24 @@ class RawQuantity(BaseModel):
     delivery_date_cell: str | None
     raw_interval_start: str | None
     raw_interval_end: str | None
+    date_treatment: Literal["placeholder", "review"] | None
 
 
-_REVIEW_LOCATION = """
-    SELECT qty.source_fields->'DateTime'->>'cell' AS location
+_KROSCHU_DATE = "qty.source_fields->'DateTime'->>'value'"
+_KROSCHU_DATE_REVIEW = f"""(
+    {_KROSCHU_DATE} = '333333'
+    OR ({_KROSCHU_DATE} = '000000' AND qty.quantity <> 0)
+)"""
+_DATE_TREATMENT = f"""CASE WHEN run.template = 'kroschu_4905' THEN CASE
+    WHEN {_KROSCHU_DATE_REVIEW} THEN 'review'
+    WHEN {_KROSCHU_DATE} = '000000' AND qty.quantity = 0 THEN 'placeholder'
+END END"""
+_REVIEW_LOCATION = f"""
+    SELECT qty.source_fields->'DateTime'->>'cell' AS location, {_KROSCHU_DATE} AS date_code
     FROM parsed_material_blocks AS block
     JOIN parsed_quantity_records AS qty ON qty.block_id = block.id
     WHERE run.template = 'kroschu_4905' AND block.run_id = run.id
-    AND qty.source_fields->'DateTime'->>'value' = '000000'
+    AND {_KROSCHU_DATE_REVIEW}
     ORDER BY block.position, qty.position LIMIT 1
 """
 _ATTACHMENT_ROWS = f"""
@@ -101,7 +112,7 @@ _MAIL_SUMMARY = f"""
         COALESCE(array_agg(DISTINCT run.template ORDER BY run.template)
             FILTER (WHERE run.template IS NOT NULL), ARRAY[]::varchar[]) AS templates,
         bool_or(att.intake_state = 'rejected' OR job.state = 'failed') AS failed,
-        bool_or(review.location IS NOT NULL) AS for_review,
+        bool_or(review.date_code IS NOT NULL) AS for_review,
         bool_or(job.state IN ('pending', 'processing')) AS in_progress,
         bool_or(job.state = 'succeeded') AS succeeded
         {_ATTACHMENT_ROWS}
@@ -198,7 +209,7 @@ def email_detail(mail_id: int, _: SignedInUser) -> MailDetail:
                     "SELECT att.id, att.filename, att.intake_state, blob.size_bytes, "
                     "job.state AS job_state, job.error_code, job.error_reason, job.error_location, "
                     "run.template, run.parser_version, "
-                    "review.location AS review_location "
+                    "review.location AS review_location, review.date_code AS review_date_code "
                     f"{_ATTACHMENT_ROWS} "
                     "LEFT JOIN archive_objects AS blob ON blob.sha256 = att.sha256 "
                     "WHERE att.mail_id = :id ORDER BY att.id"
@@ -237,7 +248,8 @@ def quantities(
                     "COALESCE(qty.source_fields->'RequestedDeliveryDate'->>'cell', "
                     "qty.source_fields->'DateTime'->>'cell') AS delivery_date_cell, "
                     "qty.source_fields->'HorizonStartDate'->>'value' AS raw_interval_start, "
-                    "qty.source_fields->'HorizonEndDate'->>'value' AS raw_interval_end "
+                    "qty.source_fields->'HorizonEndDate'->>'value' AS raw_interval_end, "
+                    f"{_DATE_TREATMENT} AS date_treatment "
                     "FROM parsed_quantity_records AS qty "
                     "JOIN parsed_material_blocks AS block ON block.id = qty.block_id "
                     "JOIN parse_runs AS run ON run.id = block.run_id "

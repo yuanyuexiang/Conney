@@ -80,6 +80,17 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
+  delivery-worker:
+    <<: *backend
+    environment:
+      <<: *database-environment
+      RELAY_MAIL_ENCRYPTION_KEY: ${RELAY_MAIL_ENCRYPTION_KEY:-}
+    command: ["python", "-m", "relay.workers.delivery"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
   web:
     build:
       context: ../web

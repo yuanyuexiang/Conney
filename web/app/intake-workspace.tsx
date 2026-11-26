@@ -34,6 +34,7 @@ type Attachment = {
   error_reason: string | null;
   error_location: string | null;
   review_location: string | null;
+  review_date_code: string | null;
   template: string | null;
   parser_version: string | null;
 };
@@ -51,6 +52,7 @@ type Quantity = {
   raw_delivery_date: string | null;
   raw_interval_start: string | null;
   raw_interval_end: string | null;
+  date_treatment: "placeholder" | "review" | null;
 };
 type Detail = { mail: Mail; attachments: Attachment[] };
 type ListParams = { state: MailFilter; query: string; limit: number; before?: number; signal?: AbortSignal };
@@ -120,7 +122,7 @@ export function Status({ state, children }: { state: MailState; children?: strin
 function AttachmentStatus({ attachment }: { attachment: Attachment }) {
   if (attachment.intake_state === "rejected") return <Status state="failed">归档校验未通过</Status>;
   if (attachment.job_state === "failed") return <Status state="failed">解析失败</Status>;
-  if (attachment.review_location) return <Status state="review" />;
+  if (attachment.review_date_code) return <Status state="review">已解析 · 待核对</Status>;
   if (attachment.job_state === "succeeded") return <Status state="complete" />;
   if (attachment.intake_state === "unsupported") return <Status state="archived" />;
   return <Status state="queued">{attachment.job_state === "processing" ? "解析中" : "排队中"}</Status>;
@@ -149,22 +151,22 @@ function QuantityTable({ quantities }: { quantities: Quantity[] }) {
           <th scope="col">单位</th>
           <th scope="col">数量坐标</th>
         </tr></thead>
-        <tbody>{quantities.map((row) => {
-          const special = row.raw_delivery_date === "000000";
-          return (
-            <tr key={row.id}>
-              <td className="mono">{row.material ?? "—"}</td>
-              <td>{special ? <>
-                <Status state="review">{deliveryDate(row)}</Status>
-                {row.delivery_date_cell && <span className="source mono date-location">{row.delivery_date_cell}</span>}
-              </> : deliveryDate(row)}</td>
-              <td className="mono">{row.quantity_type ?? "—"}</td>
-              <td className="numeric mono">{row.quantity}</td>
-              <td>{row.unit ?? "—"}</td>
-              <td className="source mono">{row.quantity_cell ?? "—"}</td>
-            </tr>
-          );
-        })}</tbody>
+        <tbody>{quantities.map((row) => (
+          <tr key={row.id}>
+            <td className="mono">{row.material ?? "—"}</td>
+            <td>
+              {row.date_treatment === "placeholder" ? <Status state="archived">000000（零量占位）</Status>
+                : row.date_treatment === "review" ? <Status state="review">{deliveryDate(row)}</Status>
+                : deliveryDate(row)}
+              {row.date_treatment && row.delivery_date_cell &&
+                <span className="source mono date-location">{row.delivery_date_cell}</span>}
+            </td>
+            <td className="mono">{row.quantity_type ?? "—"}</td>
+            <td className="numeric mono">{row.quantity}</td>
+            <td>{row.unit ?? "—"}</td>
+            <td className="source mono">{row.quantity_cell ?? "—"}</td>
+          </tr>
+        ))}</tbody>
       </table>
     </div>
   );
@@ -212,14 +214,16 @@ function AttachmentQuantities({ attachmentId }: { attachmentId: number }) {
 }
 
 function Diagnosis({ attachment }: { attachment: Attachment }) {
-  if (attachment.review_location) return (
+  if (attachment.review_date_code) return (
     <div className="diagnosis review">
       <strong>交付日期原值待核对</strong>
-      <p>源文件中的 <code>000000</code> 已保留，请按客户规则核对。</p>
-      <details>
+      {attachment.review_date_code === "000000" ?
+        <p>源文件中存在日期为 <code>000000</code> 的非零数量，请核对交货日期。</p> :
+        <p>源文件中的 <code>{attachment.review_date_code}</code> 及对应数量已保留，请核对客户的交货要求。</p>}
+      {attachment.review_location && <details>
         <summary>查看来源</summary>
         <dl><dt>Excel 坐标</dt><dd><code>{attachment.review_location}</code></dd></dl>
-      </details>
+      </details>}
     </div>
   );
 
@@ -325,6 +329,8 @@ function MailDetail({ mail, refreshKey, onDraftOpened, onTemplate }: {
               <AttachmentStatus attachment={attachment} />
             </div>
             <Diagnosis attachment={attachment} />
+            {attachment.template === "kroschu_4905" && attachment.job_state === "succeeded" &&
+              <p className="field-hint attachment-output-status">原始数量已入库。科伯舒特交付表生成待接入。</p>}
             {attachment.size_bytes !== null && (
               <div className="attachment-actions">
                 {onDraftOpened && attachment.template === "drx_delfor" && attachment.job_state === "succeeded" &&

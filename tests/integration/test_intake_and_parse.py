@@ -173,7 +173,7 @@ def test_workbench_classifies_real_jobs_and_preserves_source_coordinates(
 ) -> None:
     archive = Archive(tmp_path / "workbench-archive")
 
-    def receive_schedule(uid: int, subject: str, quantity: str) -> int:
+    def receive_schedule(uid: int, subject: str, quantity: str, date_code: str = "000000") -> int:
         path = tmp_path / "schedule.xlsx"
         workbook = Workbook()
         sheet = workbook.active
@@ -183,7 +183,7 @@ def test_workbench_classifies_real_jobs_and_preserves_source_coordinates(
             ["NewTransmissionNo", "0001"],
             ["OrderNo", "001", "CustomerItemNo", "MAT-1", "QuantityUnit", "PCE"],
             ["DateTime", "Qty"],
-            ["000000", quantity],
+            [date_code, quantity],
         ]:
             sheet.append(row)
         workbook.save(path)
@@ -203,19 +203,28 @@ def test_workbench_classifies_real_jobs_and_preserves_source_coordinates(
         before = client.get(base + "/counts").json()
         review_id = receive_schedule(23, "Workbench review", "18.0")
         failure_id = receive_schedule(24, "Workbench error", "bad")
+        placeholder_id = receive_schedule(25, "Workbench placeholder", "0.00")
+        undated_id = receive_schedule(26, "Workbench unknown date", "5", "333333")
         pending = client.get(base + "/emails", params={"state": "queued", "q": "4905.xlsx"})
-        assert [row["id"] for row in pending.json()] == [failure_id, review_id]
+        assert [row["id"] for row in pending.json()] == [
+            undated_id,
+            placeholder_id,
+            failure_id,
+            review_id,
+        ]
         follow_up = {"state": "follow_up", "q": "WORKBENCH"}
         assert client.get(base + "/emails", params=follow_up).json() == []
-        assert process_one(archive) and process_one(archive)
+        for _ in range(4):
+            assert process_one(archive)
         counts = client.get(base + "/counts").json()
         assert counts == {
-            "total": before["total"] + 2,
+            "total": before["total"] + 4,
             "failed": before["failed"] + 1,
-            "review": before["review"] + 1,
+            "review": before["review"] + 2,
             "queued": before["queued"],
         }
         assert [row["id"] for row in client.get(base + "/emails", params=follow_up).json()] == [
+            undated_id,
             failure_id,
             review_id,
         ]
@@ -231,10 +240,26 @@ def test_workbench_classifies_real_jobs_and_preserves_source_coordinates(
         assert review["mail"]["state"] == "review"
         attachment = review["attachments"][0]
         assert attachment["review_location"] == "Sheet!A5"
+        assert attachment["review_date_code"] == "000000"
         row = client.get(f"{base}/attachments/{attachment['id']}/quantities").json()[0]
         assert row["raw_delivery_date"] == "000000"
         assert row["delivery_date_cell"] == "Sheet!A5"
         assert row["requested_date"] is None
+        assert row["date_treatment"] == "review"
+        placeholder = client.get(f"{base}/emails/{placeholder_id}").json()
+        assert placeholder["mail"]["state"] == "complete"
+        placeholder_attachment = placeholder["attachments"][0]
+        assert placeholder_attachment["job_state"] == "succeeded"
+        assert placeholder_attachment["review_date_code"] is None
+        assert placeholder_attachment["review_location"] is None
+        rows_url = f"{base}/attachments/{placeholder_attachment['id']}/quantities"
+        placeholder_row = client.get(rows_url).json()[0]
+        assert placeholder_row["raw_delivery_date"] == "000000"
+        assert placeholder_row["date_treatment"] == "placeholder"
+        undated = client.get(f"{base}/emails/{undated_id}").json()
+        assert undated["mail"]["state"] == "review"
+        assert undated["attachments"][0]["review_date_code"] == "333333"
+        assert undated["attachments"][0]["review_location"] == "Sheet!A5"
         failure = client.get(f"{base}/emails/{failure_id}").json()
         assert failure["mail"]["state"] == "failed"
         assert failure["attachments"][0]["error_reason"] == "invalid quantity"

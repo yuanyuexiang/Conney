@@ -6,6 +6,7 @@ import "./workbench.css";
 import "./delivery.css";
 import "./dashboard.css";
 import "./template-rules.css";
+import "./dispatch.css";
 
 export const metadata: Metadata = {
   title: "康尼新能源 | EDI 交付计划管理",

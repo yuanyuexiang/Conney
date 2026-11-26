@@ -1,6 +1,8 @@
 from collections import defaultdict
 from datetime import UTC, date, datetime
+from hashlib import sha256
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from psycopg.types.json import Jsonb
@@ -35,6 +37,13 @@ from relay.services.delivery import (
     matching_order,
     review_kind,
     valid_entry_review,
+)
+from relay.services.delivery_release import (
+    DeliveryRelease,
+    ReleasePreview,
+    check_release,
+    freeze_release,
+    list_releases,
 )
 from relay.services.delivery_rules import (
     DrxRuleVersion,
@@ -84,6 +93,10 @@ class DeliveryDraft(DraftSnapshot):
 
 class RefreshDraft(BaseModel):
     revision: _REVISION
+
+
+class ConfirmRelease(RefreshDraft):
+    ship_through: date
 
 
 class ChangeShipment(RefreshDraft):
@@ -554,6 +567,10 @@ def delete_draft(run_id: int, revision: Annotated[int, Query(ge=1)], actor: Admi
     with get_engine().begin() as connection:
         draft = _snapshot(_draft_row(connection, run_id, lock=True))
         _check_revision(draft, revision)
+        if connection.scalar(
+            text("SELECT 1 FROM delivery_releases WHERE run_id = :id LIMIT 1"), {"id": run_id}
+        ):
+            raise HTTPException(409, detail="draft_has_confirmed_release")
         connection.execute(
             text("DELETE FROM delivery_draft_rule_history WHERE run_id = :id"), {"id": run_id}
         )
@@ -871,12 +888,16 @@ def list_draft_rule_history(run_id: int, _: SignedInUser) -> list[DraftRuleHisto
         return [DraftRuleHistory.model_validate(row) for row in rows]
 
 
-def _draft_workbook_response(draft: DraftSnapshot, filename: str) -> Response:
+def _workbook_response(content: bytes, filename: str) -> Response:
     return Response(
-        build_workbook(draft),
+        content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": (
+                f'attachment; filename="{filename}"'
+                if filename.isascii()
+                else f"attachment; filename*=UTF-8''{quote(filename, safe='')}"
+            ),
             "Cache-Control": "no-store",
             "X-Content-Type-Options": "nosniff",
         },
@@ -888,7 +909,7 @@ def download_draft(run_id: int, _: SignedInUser, revision: Annotated[int, Query(
     with get_engine().connect() as connection:
         draft = _snapshot(_draft_row(connection, run_id))
     _check_revision(draft, revision)
-    return _draft_workbook_response(draft, f"Relay-DRX-{run_id}-draft.xlsx")
+    return _workbook_response(build_workbook(draft), f"Relay-DRX-{run_id}-draft.xlsx")
 
 
 @router.get("/delivery/{run_id}/rule-history/{revision}/draft.xlsx")
@@ -904,6 +925,79 @@ def download_draft_rule_history(run_id: int, revision: int, _: SignedInUser) -> 
         )
     if snapshot is None:
         raise HTTPException(404, detail="draft_not_found")
-    return _draft_workbook_response(
-        DraftSnapshot.model_validate(snapshot), f"Relay-DRX-{run_id}-v{revision}.xlsx"
+    return _workbook_response(
+        build_workbook(DraftSnapshot.model_validate(snapshot)),
+        f"Relay-DRX-{run_id}-v{revision}.xlsx",
     )
+
+
+@router.get("/delivery/{run_id}/releases")
+def read_releases(run_id: int, _: SignedInUser) -> list[DeliveryRelease]:
+    with get_engine().connect() as connection:
+        _draft_row(connection, run_id)
+        return list_releases(connection, run_id)
+
+
+@router.get("/delivery/{run_id}/release-preview")
+def preview_release(
+    run_id: int, revision: Annotated[int, Query(ge=1)], ship_through: date, _: AdminUser
+) -> ReleasePreview:
+    with get_engine().connect() as connection:
+        draft = _snapshot(_draft_row(connection, run_id))
+        _check_revision(draft, revision)
+        return check_release(draft, ship_through)
+
+
+@router.post("/delivery/{run_id}/releases", dependencies=_BROWSER, status_code=201)
+def confirm_release(run_id: int, request: ConfirmRelease, actor: AdminUser) -> DeliveryRelease:
+    with get_engine().begin() as connection:
+        draft = _snapshot(_draft_row(connection, run_id, lock=True))
+        _check_revision(draft, request.revision)
+        releases = list_releases(connection, run_id)
+        latest = releases[0] if releases else None
+        if latest and latest.draft_revision == request.revision:
+            if latest.ship_through != request.ship_through:
+                raise HTTPException(409, detail="release_already_confirmed")
+            return latest
+        if check_release(draft, request.ship_through).blocked:
+            raise HTTPException(409, detail="release_has_blockers")
+        if latest and connection.scalar(
+            text("""
+                SELECT 1 FROM delivery_dispatch_recipients WHERE release_id = :id
+                AND state IN ('queued', 'sending') LIMIT 1
+            """),
+            {"id": latest.id},
+        ):
+            raise HTTPException(409, detail="release_dispatch_in_progress")
+        try:
+            return freeze_release(
+                connection,
+                draft,
+                run_id=run_id,
+                revision=request.revision,
+                version=latest.version + 1 if latest else 1,
+                ship_through=request.ship_through,
+                actor_id=actor.id,
+            )
+        except ValueError as error:
+            if str(error) != "release_workbook_too_large":
+                raise
+            raise HTTPException(422, detail="release_workbook_too_large") from None
+
+
+@router.get("/delivery/{run_id}/releases/{version}/workbook.xlsx")
+def download_release(run_id: int, version: int, _: SignedInUser) -> Response:
+    with get_engine().connect() as connection:
+        row = connection.execute(
+            text("""
+                SELECT filename, workbook, checksum FROM delivery_releases
+                WHERE run_id = :run_id AND version = :version
+            """),
+            {"run_id": run_id, "version": version},
+        ).one_or_none()
+    if row is None:
+        raise HTTPException(404, detail="release_not_found")
+    workbook = bytes(row.workbook)
+    if sha256(workbook).hexdigest() != row.checksum:
+        raise HTTPException(500, detail="release_workbook_damaged")
+    return _workbook_response(workbook, row.filename)

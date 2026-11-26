@@ -42,6 +42,7 @@ class OperationsStatus(BaseModel):
     checked_at: datetime
     mail_worker: WorkerStatus
     parser_worker: WorkerStatus
+    delivery_worker: WorkerStatus
     mailbox: MailboxOperations | None
     parsing: ParsingStatus
     archive: ArchiveStatus
@@ -114,6 +115,7 @@ def read_operations(_: SignedInUser) -> OperationsStatus:
         checked_at=checked_at,
         mail_worker=_worker(workers.get("mail"), checked_at),
         parser_worker=_worker(workers.get("parser"), checked_at),
+        delivery_worker=_worker(workers.get("delivery"), checked_at),
         mailbox=(
             None
             if configuration is None

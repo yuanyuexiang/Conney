@@ -19,7 +19,7 @@ import { IntakeWorkspace, type MailFilter } from "./intake-workspace";
 import { Dashboard } from "./dashboard";
 import { DeliveryWorkspace } from "./delivery-workspace";
 import { MaterialMappingPage } from "./material-mapping";
-import { MailboxSettings } from "./mailbox-settings";
+import { MailConfiguration } from "./outgoing-settings";
 import { describeSync, formatSyncTime, type IntakeCounts, type MailboxStatus } from "./workbench-status";
 import { messageOf, relayRequest, RelayRequestError, type User } from "./relay-api";
 import { UserManagement } from "./user-management";
@@ -283,7 +283,7 @@ function Workspace({ user, onUpdated, onLogout, leaving, logoutError }: {
         ) : (
           <main className="workbench management-page">
             <WorkbenchHeader {...heading} />
-            {active.id === "mailbox" && <MailboxSettings onChanged={refresh} />}
+            {active.id === "mailbox" && <MailConfiguration onChanged={refresh} />}
             {active.id === "users" && <UserManagement current={user} />}
             {active.id === "mappings" && <MaterialMappingPage />}
             {active.id === "templates" && <TemplateRulesPage

@@ -9,6 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from relay.api.auth import router as auth_router
 from relay.api.dashboard import router as dashboard_router
 from relay.api.delivery import router as delivery_router
+from relay.api.dispatch import router as dispatch_router
 from relay.api.intake import router as intake_router
 from relay.api.mailbox import router as mailbox_router
 from relay.api.operations import router as operations_router
@@ -21,12 +22,20 @@ app.include_router(auth_router)
 app.include_router(mailbox_router)
 app.include_router(intake_router)
 app.include_router(delivery_router)
+app.include_router(dispatch_router)
 app.include_router(operations_router)
 app.include_router(dashboard_router)
 
 
 @app.exception_handler(RequestValidationError)
 async def handle_validation_error(request: Request, error: RequestValidationError) -> JSONResponse:
+    if (
+        request.url.path.startswith(
+            ("/api/v1/mailbox/outgoing", "/api/v1/mailbox/recipient-groups")
+        )
+        or "/dispatches" in request.url.path
+    ):
+        return JSONResponse({"detail": "dispatch_invalid_fields"}, status_code=422)
     if request.url.path.startswith("/api/v1/mailbox"):
         return JSONResponse({"detail": "mailbox_invalid_fields"}, status_code=422)
     if request.url.path.startswith(("/api/v1/auth", "/api/v1/users")):
