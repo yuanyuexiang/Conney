@@ -1,3 +1,5 @@
+import type { DeliveryTemplate } from "./delivery-api";
+
 export type OutgoingHost = "smtp.263.net" | "smtpw.263.net" | "smtp.163.com";
 
 export type OutgoingConfig = {
@@ -24,7 +26,9 @@ export type Release = {
   draft_revision: number;
   rule_version: string;
   output_version: string;
-  ship_through: string;
+  template: DeliveryTemplate;
+  ship_through: string | null;
+  retained_issues: number;
   document_no: string | null;
   filename: string;
   confirmed_at: string;
@@ -37,6 +41,7 @@ export type ReleaseBlocker = {
   order_no: string | null;
   cell: string | null;
   requested_date: string | null;
+  reason: string | null;
 };
 
 export type ReleasePreview = {
@@ -46,6 +51,9 @@ export type ReleasePreview = {
   future_unscheduled: number;
   scheduled: number;
   blockers: ReleaseBlocker[];
+  calculated_quantities: number;
+  retained_issues: number;
+  retained_details: ReleaseBlocker[];
 };
 
 export type SendOptions = {

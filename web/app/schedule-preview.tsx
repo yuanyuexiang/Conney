@@ -13,11 +13,12 @@ const aids = {
   vitesco_delfor: "周预测保留原报文空白与零值。库存测算可填写期初库存、实际产量及产能。",
 } as const;
 
-export function SchedulePreview({ draft, admin, busy, forReview, onMatch, onRefresh }: {
-  draft: DeliveryDraft; admin: boolean; busy: boolean; forReview: boolean;
+export type ScheduleView = "demand" | "review" | "source";
+
+export function SchedulePreview({ draft, admin, busy, tab, onViewChange, onMatch, onRefresh }: {
+  draft: DeliveryDraft; admin: boolean; busy: boolean; tab: ScheduleView; onViewChange: (tab: ScheduleView) => void;
   onMatch: (material: Material) => void; onRefresh: () => void;
 }) {
-  const [tab, setTab] = useState<"demand" | "review" | "source">(forReview ? "review" : "demand");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
   const search = query.toLowerCase().trim();
@@ -41,7 +42,7 @@ export function SchedulePreview({ draft, admin, busy, forReview, onMatch, onRefr
       <div className="delivery-view-tabs" role="group" aria-label="交付草稿视图">
         {([["demand", "需求明细"], ["review", "待核对"], ["source", "原报文记录"]] as const).map(([key, label]) =>
           <button type="button" key={key} aria-pressed={tab === key}
-            onClick={() => { setTab(key); setPage(0); }}>
+            onClick={() => { onViewChange(key); setPage(0); }}>
             {label}{key === "review" && draft.pending_mappings + draft.pending_entries > 0 &&
               <span>{draft.pending_mappings + draft.pending_entries}</span>}
           </button>

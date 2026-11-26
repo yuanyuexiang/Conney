@@ -883,10 +883,11 @@ def test_confirmed_delivery_sends_same_workbook_with_recipient_results(
         ),
     ],
 )
-def test_other_contract_templates_generate_drafts(
+def test_other_contract_templates_confirm_and_dispatch(
     tmp_path: Path,
     signed_in: Callable[[TestClient, Role], User],
     request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
     template: str,
     customer: str,
     title: str,
@@ -996,6 +997,11 @@ def test_other_contract_templates_generate_drafts(
         assert draft["template"] == template and draft["pending_mappings"] == 1
         assert draft["document_no"] == "00052"
         assert admin.post(open_url).json()["id"] == draft["id"]
+        draft_url = f"/api/v1/delivery/{draft['id']}"
+        releases = f"{draft_url}/releases"
+        assert admin.post(releases, json={"revision": draft["revision"]}).json()["detail"] == (
+            "release_has_blockers"
+        )
         assert (
             admin.post(
                 "/api/v1/material-mappings",
@@ -1008,7 +1014,6 @@ def test_other_contract_templates_generate_drafts(
             ).status_code
             == 201
         )
-        draft_url = f"/api/v1/delivery/{draft['id']}"
         refreshed = admin.post(f"{draft_url}/refresh", json={"revision": draft["revision"]})
         assert refreshed.status_code == 200, refreshed.text
         result = refreshed.json()
@@ -1034,3 +1039,113 @@ def test_other_contract_templates_generate_drafts(
         else:
             assert [plan[f"{column}5"].value for column in "HIJ"] == [0, None, 5040]
             assert export["库存测算"]["F7"].value == '=IF(COUNT(E7,F5,F6)=3,E7-F5+F6,"")'
+
+        values = {"revision": result["revision"]}
+        preview = admin.get(f"{draft_url}/release-preview", params=values).json()
+        assert preview["pending_mappings"] == preview["pending_reviews"] == 0
+        assert preview["pending_shipments"] == 0 and preview["calculated_quantities"] > 0
+        assert viewer.post(releases, json=values).status_code == 403
+        assert (
+            admin.post(releases, json={**values, "ship_through": "2026-11-26"}).status_code == 422
+        )
+        if template == "kroschu_4905":
+            assert preview["retained_issues"] == 1
+            assert "333333" in preview["retained_details"][0]["reason"]
+            assert admin.post(releases, json=values).json()["detail"] == (
+                "release_retained_ack_required"
+            )
+            values["acknowledge_retained"] = True
+        else:
+            assert preview["retained_issues"] == 0
+
+        confirmed = admin.post(releases, json=values)
+        assert confirmed.status_code == 201, confirmed.text
+        v1 = confirmed.json()
+        assert v1["template"] == template and v1["ship_through"] is None
+        assert v1["version"] == 1 and "德科" not in v1["filename"]
+        assert v1["retained_issues"] == preview["retained_issues"]
+        assert admin.post(releases, json=values).json() == v1
+        assert viewer.get(releases).json() == [v1]
+        batch = viewer.get("/api/v1/delivery?confirmed=true").json()[0]
+        assert batch["id"] == draft["id"] and batch["confirmed_version"] == 1
+        assert viewer.get("/api/v1/delivery?review=true").json() == []
+        confirmed_url = f"{releases}/1/workbook.xlsx"
+        frozen = viewer.get(confirmed_url)
+        assert frozen.status_code == 200
+        checked_sheet = load_workbook(BytesIO(frozen.content))[sheet_name]
+        assert checked_sheet["A1"].value.endswith("确认版 V1")
+        assert list(checked_sheet.values)[4] == list(plan.values)[4]
+        assert admin.delete(draft_url, params={"revision": result["revision"]}).status_code == 409
+
+        monkeypatch.setenv("RELAY_MAIL_ENCRYPTION_KEY", Fernet.generate_key().decode())
+        get_mail_settings.cache_clear()
+        sender = f"{item.lower()}@example.com"
+        group_name = f"测试-{item}"
+
+        def clean_dispatch_settings() -> None:
+            get_mail_settings.cache_clear()
+            with get_engine().begin() as connection:
+                connection.execute(
+                    text("DELETE FROM outgoing_mailbox WHERE address = :address"),
+                    {"address": sender},
+                )
+                connection.execute(
+                    text("DELETE FROM delivery_recipient_groups WHERE name = :name"),
+                    {"name": group_name},
+                )
+
+        request.addfinalizer(clean_dispatch_settings)
+        smtp = MagicMock()
+        for command in (smtp.mail, smtp.rcpt, smtp.data):
+            command.return_value = (250, b"accepted")
+        monkeypatch.setattr(smtplib, "SMTP_SSL", MagicMock(return_value=smtp))
+        smtp_url = "/api/v1/mailbox/outgoing"
+        saved = admin.put(
+            smtp_url,
+            json={
+                "address": sender,
+                "host": "smtp.263.net",
+                "domains": ["example.com"],
+                "password": "test-smtp-secret",
+            },
+        )
+        assert saved.status_code == 200, saved.text
+        assert admin.post(f"{smtp_url}/connection-test").json() == {"result": "ok"}
+        recipient = "production@example.com"
+        group = admin.post(
+            "/api/v1/mailbox/recipient-groups",
+            json={
+                "name": group_name,
+                "addresses": [recipient],
+            },
+        )
+        assert group.status_code == 201, group.text
+        dispatches = f"{releases}/1/dispatches"
+        assert viewer.get(f"{dispatches}/options").status_code == 403
+        options = admin.get(f"{dispatches}/options").json()
+        sent = admin.post(
+            dispatches,
+            json={
+                "request_id": str(uuid4()),
+                "mailbox_revision": options["mailbox_revision"],
+                "group_ids": [group.json()["id"]],
+                "addresses": [recipient],
+                "subject": f"{template}交付确认版",
+                "body": "请查收确认版。",
+            },
+        )
+        assert sent.status_code == 202, sent.text
+        assert delivery_worker.process_one()
+        state = admin.get(dispatches).json()[0]["recipients"][0]
+        assert state["state"] == "accepted" and state["address"] == recipient
+        message = message_from_bytes(smtp.data.call_args.args[0], policy=policy.default)
+        (emailed,) = message.iter_attachments()
+        assert emailed.get_filename() == v1["filename"]
+        assert emailed.get_payload(decode=True) == frozen.content
+
+        renewed = admin.post(f"{draft_url}/refresh", json={"revision": result["revision"]}).json()
+        assert viewer.get("/api/v1/delivery?confirmed=true").json() == []
+        assert viewer.get(confirmed_url).content == frozen.content
+        v2 = admin.post(releases, json={**values, "revision": renewed["revision"]})
+        assert v2.status_code == 201, v2.text
+        assert v2.json()["version"] == 2

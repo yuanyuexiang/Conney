@@ -269,7 +269,7 @@ def _inventory(sheet: Worksheet, draft: DraftSnapshot, axis: list[date]) -> None
     sheet.freeze_panes = "F5"
 
 
-def build_schedule_workbook(draft: DraftSnapshot) -> bytes:
+def build_schedule_workbook(draft: DraftSnapshot, *, release_version: int | None = None) -> bytes:
     config = SCHEDULE_OUTPUTS[cast(ScheduleCode, draft.template)]
     workbook = Workbook()
     first = workbook["Sheet"]
@@ -284,6 +284,9 @@ def build_schedule_workbook(draft: DraftSnapshot) -> bytes:
             _inventory(workbook.create_sheet(config.sheets[1]), draft, axis)
     _traces(workbook.create_sheet("需求与来源"), draft)
     _traces(workbook.create_sheet("待核对"), draft, review=True)
+    if release_version is not None:
+        for sheet in workbook.worksheets:
+            sheet["A1"] = f"{sheet['A1'].value} · 确认版 V{release_version}"
     with BytesIO() as output:
         workbook.save(output)
         return output.getvalue()

@@ -55,9 +55,8 @@ from relay.services.delivery_rules import (
     rule_by_id,
     rule_versions,
 )
-from relay.services.delivery_xlsx import build_workbook
+from relay.services.delivery_workbook import delivery_workbook
 from relay.services.schedule_delivery import build_schedule_snapshot
-from relay.services.schedule_xlsx import build_schedule_workbook
 from relay.services.template_catalog import WORKBOOK_TEMPLATES, WorkbookTemplate
 
 router = APIRouter(prefix="/api/v1", tags=["delivery"])
@@ -65,9 +64,12 @@ _BROWSER = [Depends(require_browser_request)]
 _REVISION = Annotated[int, Field(ge=1)]
 _MAPPING_FIELDS = ", ".join(MappingValues.model_fields)
 _MAPPING_COLUMNS = f"{_MAPPING_FIELDS}, order_key"
-DRAFT_REVIEW_PREDICATE = (
-    "((snapshot->>'pending_mappings')::integer > 0 OR (snapshot->>'pending_entries')::integer > 0)"
-)
+_CURRENT_RELEASE = """SELECT version FROM delivery_releases
+    WHERE run_id = delivery_drafts.run_id AND draft_revision = delivery_drafts.revision"""
+DRAFT_REVIEW_PREDICATE = f"""(
+    ((snapshot->>'pending_mappings')::integer > 0 OR (snapshot->>'pending_entries')::integer > 0)
+    AND NOT EXISTS ({_CURRENT_RELEASE})
+)"""
 _ATTACHMENT = """
     SELECT run.id, run.template, run.source_fields, run.parser_version,
            att.id AS attachment_id, att.mail_id, att.filename,
@@ -90,6 +92,7 @@ class DraftSummary(BaseModel):
     pending_entries: int
     pending_shipments: int
     updated_at: datetime
+    confirmed_version: int | None
 
 
 class DeliveryDraft(DraftSnapshot):
@@ -102,7 +105,8 @@ class RefreshDraft(BaseModel):
 
 
 class ConfirmRelease(RefreshDraft):
-    ship_through: date
+    ship_through: date | None = None
+    acknowledge_retained: bool = False
 
 
 class ChangeShipment(RefreshDraft):
@@ -515,11 +519,13 @@ def list_drafts(
     before: Annotated[int, Query(gt=0)] | None = None,
     review: bool = False,
     q: Annotated[str, Query(max_length=120)] = "",
+    confirmed: bool = False,
 ) -> list[DraftSummary]:
     with get_engine().connect() as connection:
         rows = connection.execute(
             text(
                 "SELECT run_id AS id, updated_at, "
+                f"({_CURRENT_RELEASE}) AS confirmed_version, "
                 "COALESCE(snapshot->>'template', 'drx_delfor') AS template, "
                 "snapshot->>'attachment_id' AS attachment_id, snapshot->>'filename' AS filename, "
                 "snapshot->>'document_no' AS document_no, "
@@ -538,9 +544,10 @@ def list_drafts(
                 "WHEN 'jlr_deljit' THEN '捷豹路虎 JLR DELJIT' ELSE '德科 DRX' END)), "
                 "lower(:q)) > 0) "
                 f"AND (NOT :review OR {DRAFT_REVIEW_PREDICATE}) "
+                f"AND (NOT :confirmed OR EXISTS ({_CURRENT_RELEASE})) "
                 "ORDER BY run_id DESC LIMIT 100"
             ),
-            {"before": before, "review": review, "q": q.strip()},
+            {"before": before, "review": review, "confirmed": confirmed, "q": q.strip()},
         ).mappings()
         return [DraftSummary.model_validate(row) for row in rows]
 
@@ -948,11 +955,8 @@ def download_draft(run_id: int, _: SignedInUser, revision: Annotated[int, Query(
     with get_engine().connect() as connection:
         draft = _snapshot(_draft_row(connection, run_id))
     _check_revision(draft, revision)
-    if draft.template != "drx_delfor":
-        return _workbook_response(
-            build_schedule_workbook(draft), f"Relay-{draft.template}-{run_id}-draft.xlsx"
-        )
-    return _workbook_response(build_workbook(draft), f"Relay-DRX-{run_id}-draft.xlsx")
+    label = "DRX" if draft.template == "drx_delfor" else draft.template
+    return _workbook_response(delivery_workbook(draft), f"Relay-{label}-{run_id}-draft.xlsx")
 
 
 @router.get("/delivery/{run_id}/rule-history/{revision}/draft.xlsx")
@@ -969,7 +973,7 @@ def download_draft_rule_history(run_id: int, revision: int, _: SignedInUser) -> 
     if snapshot is None:
         raise HTTPException(404, detail="draft_not_found")
     return _workbook_response(
-        build_workbook(DraftSnapshot.model_validate(snapshot)),
+        delivery_workbook(DraftSnapshot.model_validate(snapshot)),
         f"Relay-DRX-{run_id}-v{revision}.xlsx",
     )
 
@@ -983,13 +987,23 @@ def read_releases(run_id: int, _: SignedInUser) -> list[DeliveryRelease]:
 
 @router.get("/delivery/{run_id}/release-preview")
 def preview_release(
-    run_id: int, revision: Annotated[int, Query(ge=1)], ship_through: date, _: AdminUser
+    run_id: int,
+    revision: Annotated[int, Query(ge=1)],
+    _: AdminUser,
+    ship_through: date | None = None,
 ) -> ReleasePreview:
     with get_engine().connect() as connection:
         draft = _snapshot(_draft_row(connection, run_id))
         _check_revision(draft, revision)
-        _require_drx(draft)
-        return check_release(draft, ship_through)
+        return _check_confirmation(draft, ship_through)
+
+
+def _check_confirmation(draft: DeliveryDraft, ship_through: date | None) -> ReleasePreview:
+    if draft.template == "drx_delfor" and ship_through is None:
+        raise HTTPException(422, detail="release_cutoff_required")
+    if draft.template != "drx_delfor" and ship_through is not None:
+        raise HTTPException(422, detail="release_unexpected_cutoff")
+    return check_release(draft, ship_through)
 
 
 @router.post("/delivery/{run_id}/releases", dependencies=_BROWSER, status_code=201)
@@ -997,15 +1011,17 @@ def confirm_release(run_id: int, request: ConfirmRelease, actor: AdminUser) -> D
     with get_engine().begin() as connection:
         draft = _snapshot(_draft_row(connection, run_id, lock=True))
         _check_revision(draft, request.revision)
-        _require_drx(draft)
         releases = list_releases(connection, run_id)
         latest = releases[0] if releases else None
         if latest and latest.draft_revision == request.revision:
             if latest.ship_through != request.ship_through:
                 raise HTTPException(409, detail="release_already_confirmed")
             return latest
-        if check_release(draft, request.ship_through).blocked:
+        preview = _check_confirmation(draft, request.ship_through)
+        if preview.blocked:
             raise HTTPException(409, detail="release_has_blockers")
+        if preview.retained_issues and not request.acknowledge_retained:
+            raise HTTPException(409, detail="release_retained_ack_required")
         if latest and connection.scalar(
             text("""
                 SELECT 1 FROM delivery_dispatch_recipients WHERE release_id = :id
@@ -1022,6 +1038,7 @@ def confirm_release(run_id: int, request: ConfirmRelease, actor: AdminUser) -> D
                 revision=request.revision,
                 version=latest.version + 1 if latest else 1,
                 ship_through=request.ship_through,
+                retained_issues=preview.retained_issues,
                 actor_id=actor.id,
             )
         except ValueError as error:

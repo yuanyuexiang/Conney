@@ -5,14 +5,15 @@ from hashlib import sha256
 from pydantic import BaseModel
 from sqlalchemy import Connection, text
 
-from relay.services.delivery import DraftSnapshot
-from relay.services.delivery_xlsx import build_workbook
+from relay.services.delivery import DeliveryTemplate, DraftSnapshot
+from relay.services.delivery_workbook import delivery_workbook
+from relay.services.schedule_delivery import SCHEDULE_OUTPUTS
 
 _WORKBOOK_LIMIT = 10 * 1024 * 1024
 
 RELEASE_COLUMNS = """
     r.id, r.run_id, r.version, r.draft_revision, r.rule_version, r.output_version,
-    r.ship_through, r.document_no, r.filename, r.confirmed_at,
+    r.template, r.ship_through, r.retained_issues, r.document_no, r.filename, r.confirmed_at,
     u.username AS confirmed_by
 """
 
@@ -23,6 +24,7 @@ class ReleaseBlocker(BaseModel):
     order_no: str | None
     cell: str | None
     requested_date: date | None = None
+    reason: str | None = None
 
 
 class ReleasePreview(BaseModel):
@@ -32,6 +34,9 @@ class ReleasePreview(BaseModel):
     future_unscheduled: int
     scheduled: int
     blockers: list[ReleaseBlocker]
+    calculated_quantities: int
+    retained_issues: int
+    retained_details: list[ReleaseBlocker]
 
     @property
     def blocked(self) -> bool:
@@ -45,14 +50,16 @@ class DeliveryRelease(BaseModel):
     draft_revision: int
     rule_version: str
     output_version: str
-    ship_through: date
+    template: DeliveryTemplate
+    ship_through: date | None
+    retained_issues: int
     document_no: str | None
     filename: str
     confirmed_at: datetime
     confirmed_by: str
 
 
-def check_release(draft: DraftSnapshot, ship_through: date) -> ReleasePreview:
+def check_release(draft: DraftSnapshot, ship_through: date | None = None) -> ReleasePreview:
     result = ReleasePreview(
         pending_mappings=0,
         pending_reviews=0,
@@ -60,6 +67,9 @@ def check_release(draft: DraftSnapshot, ship_through: date) -> ReleasePreview:
         future_unscheduled=0,
         scheduled=0,
         blockers=[],
+        calculated_quantities=0,
+        retained_issues=0,
+        retained_details=[],
     )
     for material in draft.materials:
         if material.mapping_state != "matched":
@@ -74,6 +84,30 @@ def check_release(draft: DraftSnapshot, ship_through: date) -> ReleasePreview:
                     )
                 )
         for entry in material.entries:
+            if draft.template != "drx_delfor":
+                plan = entry.plan
+                if plan and plan.kind in {"day", "week"} and plan.amount is not None:
+                    result.calculated_quantities += 1
+                if plan is None or plan.kind == "review":
+                    details = result.blockers
+                    result.pending_reviews += 1
+                elif plan.issue:
+                    details = result.retained_details
+                    result.retained_issues += 1
+                else:
+                    continue
+                if len(details) < 20:
+                    details.append(
+                        ReleaseBlocker(
+                            kind="schedule_review",
+                            customer_item=material.customer_item,
+                            order_no=material.order_no,
+                            cell=entry.quantity_cell,
+                            requested_date=plan.start if plan else None,
+                            reason=plan.issue if plan else "缺少计算结果，请重新匹配并核验",
+                        )
+                    )
+                continue
             kind: str
             required_date = (
                 entry.review.delivery_date if entry.review else None
@@ -82,7 +116,11 @@ def check_release(draft: DraftSnapshot, ship_through: date) -> ReleasePreview:
                 result.pending_reviews += 1
                 kind = entry.state
             elif entry.state == "transport_missing":
-                if required_date is not None and required_date > ship_through:
+                if (
+                    ship_through is not None
+                    and required_date is not None
+                    and required_date > ship_through
+                ):
                     result.future_unscheduled += 1
                     continue
                 result.pending_shipments += 1
@@ -122,21 +160,25 @@ def freeze_release(
     run_id: int,
     revision: int,
     version: int,
-    ship_through: date,
+    ship_through: date | None,
+    retained_issues: int,
     actor_id: int,
 ) -> DeliveryRelease:
     document_no = re.sub(r"[^A-Za-z0-9_-]+", "-", (draft.document_no or str(run_id)))[:48]
-    filename = f"德科交付计划_报文{document_no}_V{version}.xlsx"
-    workbook = build_workbook(draft, release_version=version, ship_through=ship_through)
+    title = "德科" if draft.template == "drx_delfor" else SCHEDULE_OUTPUTS[draft.template].title
+    filename = f"{title}交付计划_报文{document_no}_V{version}.xlsx"
+    workbook = delivery_workbook(draft, release_version=version, ship_through=ship_through)
     if len(workbook) > _WORKBOOK_LIMIT:
         raise ValueError("release_workbook_too_large")
     connection.execute(
         text("""
             INSERT INTO delivery_releases (
-                run_id, version, draft_revision, ship_through, rule_version, output_version,
+                run_id, version, draft_revision, template, ship_through, retained_issues,
+                rule_version, output_version,
                 document_no, filename, workbook, checksum, confirmed_by
             ) VALUES (
-                :run_id, :version, :revision, :ship_through, :rule_version, :output_version,
+                :run_id, :version, :revision, :template, :ship_through, :retained_issues,
+                :rule_version, :output_version,
                 :document_no, :filename, :workbook, :checksum, :actor_id
             )
         """),
@@ -144,7 +186,9 @@ def freeze_release(
             "run_id": run_id,
             "version": version,
             "revision": revision,
+            "template": draft.template,
             "ship_through": ship_through,
+            "retained_issues": retained_issues,
             "rule_version": draft.rule_version,
             "output_version": draft.output_version,
             "document_no": draft.document_no,

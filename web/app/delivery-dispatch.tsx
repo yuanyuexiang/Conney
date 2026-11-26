@@ -3,8 +3,8 @@
 import { CheckCircleOutlined, DownloadOutlined, HistoryOutlined, SendOutlined } from "@ant-design/icons";
 import { Modal } from "antd";
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import type { DeliveryDraft } from "./delivery-api";
-import type { DispatchRecord, RecipientState, Release, ReleasePreview, SendOptions } from "./dispatch-api";
+import { deliveryTemplates, type DeliveryDraft } from "./delivery-api";
+import type { DispatchRecord, RecipientState, Release, ReleaseBlocker, ReleasePreview, SendOptions } from "./dispatch-api";
 import { messageOf, RelayRequestError, relayRequest } from "./relay-api";
 import { chinaTime } from "./workbench-status";
 
@@ -27,6 +27,18 @@ const releasedFile = (release: Release) =>
 const deliverySends = (release: Release) =>
   `/delivery/${release.run_id}/releases/${release.version}/dispatches`;
 
+function ConfirmationIssues({ rows, label }: { rows: ReleaseBlocker[]; label: string }) {
+  return <div className="table-scroll dispatch-blockers">
+    <table aria-label={label}><thead><tr><th>问题</th><th>客户料号 / 订单</th><th>来源</th><th>交货日期</th></tr></thead>
+      <tbody>{rows.map((item, index) => <tr key={index}>
+        <td>{item.reason ?? blockerNames[item.kind] ?? "待核验"}</td>
+        <td>{item.customer_item ?? "—"} / {item.order_no ?? "—"}</td>
+        <td>{item.cell ?? "—"}</td><td>{item.requested_date ?? "—"}</td>
+      </tr>)}</tbody>
+    </table>
+  </div>;
+}
+
 function ConfirmDelivery({ draft, onClose, onConfirmed, onFix, onStale, onAlreadyConfirmed }: {
   draft: DeliveryDraft; onClose: () => void; onConfirmed: (release: Release) => void;
   onFix: (mode: "review" | "shipment") => void; onStale: () => void; onAlreadyConfirmed: () => void;
@@ -35,16 +47,21 @@ function ConfirmDelivery({ draft, onClose, onConfirmed, onFix, onStale, onAlread
   const [preview, setPreview] = useState<{ cutoff: string; revision: number; data: ReleasePreview }>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
+  const drx = draft.template === "drx_delfor";
   const details = preview?.cutoff === cutoff && preview.revision === draft.revision ? preview.data : undefined;
   const blocked = details && (details.pending_mappings + details.pending_reviews + details.pending_shipments > 0);
 
   useEffect(() => {
-    if (!cutoff) return;
+    if (drx && !cutoff) return;
     const request = new AbortController();
-    const query = new URLSearchParams({ revision: String(draft.revision), ship_through: cutoff });
+    const query = new URLSearchParams({ revision: String(draft.revision) });
+    if (drx) query.set("ship_through", cutoff);
     relayRequest<ReleasePreview>(`/delivery/${draft.id}/release-preview?${query}`, { signal: request.signal })
       .then(data => {
-        if (!request.signal.aborted) { setPreview({ cutoff, revision: draft.revision, data }); setError(""); }
+        if (!request.signal.aborted) {
+          setPreview({ cutoff, revision: draft.revision, data }); setAcknowledged(false); setError("");
+        }
       })
       .catch(reason => {
         if (request.signal.aborted) return;
@@ -52,16 +69,19 @@ function ConfirmDelivery({ draft, onClose, onConfirmed, onFix, onStale, onAlread
         setError(messageOf(reason));
       });
     return () => request.abort();
-  }, [draft.id, draft.revision, cutoff, onStale]);
+  }, [draft.id, draft.revision, cutoff, drx, onStale]);
 
   async function confirm(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!details || blocked) return;
+    if (!details || blocked || (details.retained_issues > 0 && !acknowledged)) return;
     setBusy(true);
     setError("");
     try {
       const release = await relayRequest<Release>(`/delivery/${draft.id}/releases`, {
-        method: "POST", body: JSON.stringify({ revision: draft.revision, ship_through: cutoff }),
+        method: "POST", body: JSON.stringify({
+          revision: draft.revision,
+          ...(drx ? { ship_through: cutoff } : { acknowledge_retained: acknowledged }),
+        }),
       });
       onConfirmed(release);
     } catch (reason) {
@@ -78,16 +98,23 @@ function ConfirmDelivery({ draft, onClose, onConfirmed, onFix, onStale, onAlread
     onCancel={onClose} closable={!busy} keyboard={!busy} mask={{ closable: false }}>
     <form className="dispatch-form" onSubmit={event => void confirm(event)}>
       <p className="field-hint">报文 {draft.document_no ?? "—"} · 草稿版本 {draft.revision} · 规则 {draft.rule_version}</p>
-      <label className="dispatch-date">核验交货截至日<input type="date" value={cutoff} required disabled={busy}
-        onChange={event => { setCutoff(event.target.value); setError(""); setPreview(undefined); }} /></label>
-      <p className="field-hint">截至当日（含逾期）的正式需求须已安排发货。之后的需求和区间预测随确认版保留。</p>
-      {cutoff && !details && !error && <p className="field-hint" role="status">正在检查草稿…</p>}
+      {drx ? <>
+        <label className="dispatch-date">核验交货截至日<input type="date" value={cutoff} required disabled={busy}
+          onChange={event => { setCutoff(event.target.value); setError(""); setPreview(undefined); }} /></label>
+        <p className="field-hint">截至当日（含逾期）的正式需求须已安排发货。之后的需求和区间预测随确认版保留。</p>
+      </> : <p className="field-hint">整批核验 {deliveryTemplates[draft.template].title} 的物料映射和需求计算。通过后生成可下载、可分发的确认版。</p>}
+      {(!drx || cutoff) && !details && !error && <p className="field-hint" role="status">正在检查草稿…</p>}
       {details && <>
         <dl className="dispatch-counters">
           <div><dt>未匹配物料</dt><dd>{details.pending_mappings}</dd></div>
           <div><dt>待核对需求</dt><dd>{details.pending_reviews}</dd></div>
-          <div><dt>范围内待安排</dt><dd>{details.pending_shipments}</dd></div>
-          <div><dt>已安排发货</dt><dd>{details.scheduled}</dd></div>
+          {drx ? <>
+            <div><dt>范围内待安排</dt><dd>{details.pending_shipments}</dd></div>
+            <div><dt>已安排发货</dt><dd>{details.scheduled}</dd></div>
+          </> : <>
+            <div><dt>已计算数量记录</dt><dd>{details.calculated_quantities}</dd></div>
+            <div><dt>随确认版保留</dt><dd>{details.retained_issues}</dd></div>
+          </>}
         </dl>
         {details.future_unscheduled > 0 && <p className="field-hint">截至日之后还有 {details.future_unscheduled} 条待安排需求。</p>}
         {blocked && <div className="dispatch-actions dispatch-fix">
@@ -96,21 +123,23 @@ function ConfirmDelivery({ draft, onClose, onConfirmed, onFix, onStale, onAlread
           {details.pending_shipments > 0 &&
             <button type="button" className="button" onClick={() => onFix("shipment")}>查看待安排发货</button>}
         </div>}
-        {details.blockers.length > 0 && <div className="table-scroll dispatch-blockers">
-          <table aria-label="阻止本次确认的问题"><thead><tr><th>问题</th><th>客户料号 / 订单</th><th>来源</th><th>交货日期</th></tr></thead>
-            <tbody>{details.blockers.map((item, index) => <tr key={index}>
-              <td>{blockerNames[item.kind] ?? "待核验"}</td><td>{item.customer_item ?? "—"} / {item.order_no ?? "—"}</td>
-              <td>{item.cell ?? "—"}</td><td>{item.requested_date ?? "—"}</td>
-            </tr>)}</tbody>
-          </table>
-          {details.pending_mappings + details.pending_reviews + details.pending_shipments > details.blockers.length &&
-            <p className="field-hint">显示前 {details.blockers.length} 项，完整清单可在对应视图查看。</p>}
-        </div>}
+        {details.blockers.length > 0 && <ConfirmationIssues rows={details.blockers} label="阻止本次确认的问题" />}
+        {details.pending_mappings + details.pending_reviews + details.pending_shipments > details.blockers.length &&
+          <p className="field-hint">显示前 {details.blockers.length} 项，完整清单可在对应视图查看。</p>}
+        {details.retained_issues > 0 && <>
+          <p className="field-hint">特殊日期及跨周区间保留在确认版的「待核对」工作表，供后续人工处理。</p>
+          <ConfirmationIssues rows={details.retained_details} label="随确认版保留的记录" />
+          {details.retained_issues > details.retained_details.length && <p className="field-hint">
+            显示前 {details.retained_details.length} 项，完整清单见草稿的「待核对」。
+          </p>}
+          <label className="dispatch-choice"><input type="checkbox" checked={acknowledged} disabled={busy}
+            onChange={event => setAcknowledged(event.target.checked)} />我已核对这些记录，并确认按原值或区间保留</label>
+        </>}
       </>}
       {error && <p className="notice failed" role="alert">{error}</p>}
       <div className="dispatch-actions">
         <button type="button" className="button" onClick={onClose} disabled={busy}>取消</button>
-        <button type="submit" className="button primary-button" disabled={busy || !details || blocked}>
+        <button type="submit" className="button primary-button" disabled={busy || !details || blocked || (details.retained_issues > 0 && !acknowledged)}>
           {busy ? "正在生成…" : "确认并生成版本"}
         </button>
       </div>
@@ -137,6 +166,8 @@ function SendDelivery({ release, onClose, onSent }: {
   const [reload, setReload] = useState(0);
   const withRequestKey = useRequestKey();
   const path = deliverySends(release);
+  const title = release.template === "drx_delfor" ? "德科" : deliveryTemplates[release.template].title;
+  const scope = release.ship_through ? `，核验交货截至 ${release.ship_through}` : "";
   const all = [...new Set(options?.groups.filter(({ id }) => selected.includes(id)).flatMap(group => group.addresses))].sort();
   const addresses = all.filter(address => !options?.attempted_addresses.includes(address));
 
@@ -192,10 +223,10 @@ function SendDelivery({ release, onClose, onSent }: {
         </div>}
       </>}
       <label>邮件主题<input name="subject" required maxLength={180} disabled={busy}
-        defaultValue={`德科交付计划 · 报文 ${release.document_no ?? release.run_id} · V${release.version}`} /></label>
+        defaultValue={`${title}交付计划 · 报文 ${release.document_no ?? release.run_id} · V${release.version}`} /></label>
       {release.version > 1 && <p className="field-hint">正文开头将注明「本邮件附件 V{release.version} 替代 V{release.version - 1}，请以本版为准。」</p>}
       <label>邮件正文<textarea name="body" rows={4} required maxLength={4000} disabled={busy}
-        defaultValue={`各位好，\n请查收本次德科交付计划，核验交货截至 ${release.ship_through}。\n谢谢。`} /></label>
+        defaultValue={`各位好，\n请查收本次${title}交付计划${scope}。\n谢谢。`} /></label>
       {error && <p className="notice failed" role="alert">{error}
         <button type="button" className="button" onClick={() => {
           setError(""); setOptions(undefined); setSelected([]); setReload(value => value + 1);
@@ -311,8 +342,9 @@ function SendHistory({ release, canRetry, onClose, newlyQueued }: {
   </Modal>;
 }
 
-export function DeliveryDispatchActions({ draft, admin, disabled, onReleaseExists, onFix, onStale }: {
-  draft: DeliveryDraft; admin: boolean; disabled: boolean; onReleaseExists: (exists: boolean) => void;
+export function DeliveryDispatchActions({ draft, admin, disabled, onReleaseChange, onReleaseCreated, onFix, onStale }: {
+  draft: DeliveryDraft; admin: boolean; disabled: boolean; onReleaseChange: (release: Release | null) => void;
+  onReleaseCreated: () => void;
   onFix: (mode: "review" | "shipment") => void; onStale: () => void;
 }) {
   const [releases, setReleases] = useState<Release[]>();
@@ -330,11 +362,11 @@ export function DeliveryDispatchActions({ draft, admin, disabled, onReleaseExist
     relayRequest<Release[]>(`/delivery/${draft.id}/releases`, { signal: controller.signal })
       .then(values => {
         if (controller.signal.aborted) return;
-        setReleases(values); onReleaseExists(values.length > 0); setError("");
+        setReleases(values); onReleaseChange(values[0] ?? null); setError("");
       })
       .catch(reason => { if (!controller.signal.aborted) setError(messageOf(reason)); });
     return () => controller.abort();
-  }, [draft.id, draft.revision, reload, onReleaseExists]);
+  }, [draft.id, draft.revision, reload, onReleaseChange]);
 
   function history(release: Release, queued = false) {
     setSelected(release); setNewlyQueued(queued); setPanel("history");
@@ -348,16 +380,16 @@ export function DeliveryDispatchActions({ draft, admin, disabled, onReleaseExist
     {latest && current && <a className="button" href={releasedFile(latest)}>
       <DownloadOutlined aria-hidden="true" /> 下载确认版 V{latest.version}
     </a>}
-    {admin && releases && (current && latest
+    {admin && (current && latest
       ? <button type="button" className="button primary-button" disabled={disabled}
         onClick={() => { setSelected(latest); setPanel("send"); }}><SendOutlined aria-hidden="true" /> 邮件发送</button>
-      : <button type="button" className="button primary-button" disabled={disabled}
+      : <button type="button" className="button primary-button" disabled={disabled || !releases}
         onClick={() => setPanel("confirm")}><CheckCircleOutlined aria-hidden="true" /> 确认交付</button>)}
     {panel === "confirm" && <ConfirmDelivery draft={draft} onClose={close} onStale={onStale}
       onAlreadyConfirmed={() => { setReload(value => value + 1); setPanel("releases"); }}
       onFix={mode => { close(); onFix(mode); }} onConfirmed={release => {
         setReleases(previous => [release, ...(previous ?? []).filter(value => value.id !== release.id)]);
-        onReleaseExists(true); setPanel("releases");
+        onReleaseChange(release); onReleaseCreated(); setPanel("releases");
       }} />}
     {panel === "releases" && <Modal open centered width={660} title="确认版本" onCancel={close}
       footer={<button type="button" className="button" onClick={close}>关闭</button>}>
@@ -368,7 +400,10 @@ export function DeliveryDispatchActions({ draft, admin, disabled, onReleaseExist
             <span className={`status ${index === 0 ? "complete" : "queued"}`}>{index === 0 ? "最新确认版" : "历史版本"}</span>
             <p>{release.filename}</p>
             <p className="field-hint">{release.confirmed_by} 确认于 {chinaTime.format(new Date(release.confirmed_at))}</p>
-            <p className="field-hint">草稿版本 {release.draft_revision} · 规则 {release.rule_version} · 核验截至 {release.ship_through}</p>
+            <p className="field-hint">草稿版本 {release.draft_revision} · 规则 {release.rule_version}
+              {release.ship_through && ` · 核验截至 ${release.ship_through}`}
+              {release.retained_issues > 0 && ` · 保留 ${release.retained_issues} 项待核对记录`}
+            </p>
           </div>
           <div className="dispatch-actions">
             <a className="button" href={releasedFile(release)}>下载</a>

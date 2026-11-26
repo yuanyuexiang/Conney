@@ -12,7 +12,8 @@ import {
   type Shipment, type Summary,
 } from "./delivery-api";
 import { MappingDialog } from "./material-mapping";
-import { SchedulePreview } from "./schedule-preview";
+import { SchedulePreview, type ScheduleView } from "./schedule-preview";
+import type { Release } from "./dispatch-api";
 import { messageOf, relayRequest, RelayRequestError } from "./relay-api";
 import { WorkbenchHeader, type WorkbenchHeading } from "./workbench-header";
 import { WorkbenchSelect } from "./workbench-select";
@@ -271,7 +272,8 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [reload, setReload] = useState(0);
-  const [releaseExists, setReleaseExists] = useState(false);
+  const [latestRelease, setLatestRelease] = useState<Release | null>();
+  const [scheduleView, setScheduleView] = useState<ScheduleView>(review ? "review" : "demand");
   const reloadDraft = useCallback(() => setReload(value => value + 1), []);
   const [rulePanel, setRulePanel] = useState<{ preview: DraftRulePreview | null; history: DraftRuleHistory[] }>();
   const [ruleBusy, setRuleBusy] = useState<"read" | "apply">();
@@ -404,6 +406,7 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
     }
   }
   const reviewGroups = [...groups.values()];
+  const confirmed = latestRelease && detail?.revision === latestRelease.draft_revision ? latestRelease : null;
 
   return (
     <section className="delivery-detail" aria-label="交付批次详情">
@@ -414,10 +417,13 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
             <div className="delivery-detail-title">
               <div>
                 <p className="delivery-eyebrow">{deliveryTemplates[detail.template].title} · 报文 {detail.document_no ?? "—"}</p>
-                <h2>交付草稿 <span className="delivery-badge review">版本 {detail.revision}</span></h2>
+                <h2>{confirmed ? "交付确认版" : "交付草稿"} {confirmed
+                  ? <span className="delivery-badge">V{confirmed.version}</span>
+                  : <span className="delivery-badge review">版本 {detail.revision}</span>}
+                </h2>
               </div>
               <div className="delivery-detail-actions">
-                {admin && !releaseExists && <button type="button" className="button delivery-delete-button" aria-haspopup="dialog"
+                {admin && latestRelease === null && <button type="button" className="button delivery-delete-button" aria-haspopup="dialog"
                   disabled={downloading || busy || deleting} onClick={() => {
                     setDeleteError("");
                     setDeleteRevision(detail.revision);
@@ -425,9 +431,12 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
                 <button type="button" className="button" disabled={downloading || busy} onClick={() => void download()}>
                   <DownloadOutlined aria-hidden="true" /> {downloading ? "正在生成…" : "下载草稿"}
                 </button>
-                {detail.template === "drx_delfor" &&
-                  <DeliveryDispatchActions draft={detail} admin={admin} disabled={busy || deleting}
-                    onFix={setMode} onStale={reloadDraft} onReleaseExists={setReleaseExists} />}
+                <DeliveryDispatchActions draft={detail} admin={admin} disabled={busy || deleting}
+                  onFix={next => {
+                    if (detail.template === "drx_delfor") setMode(next);
+                    else setScheduleView("review");
+                  }} onStale={reloadDraft} onReleaseChange={setLatestRelease}
+                  onReleaseCreated={() => onChange(detail)} />
               </div>
             </div>
             <div className="delivery-meta">
@@ -446,7 +455,7 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
       {error && <p className="notice failed" role="alert">{error}</p>}
       {!detail && !error && <p className="empty" role="status">正在读取交付草稿…</p>}
       {detail && detail.template !== "drx_delfor" &&
-        <SchedulePreview draft={detail} admin={admin} busy={busy} forReview={review}
+        <SchedulePreview draft={detail} admin={admin} busy={busy} tab={scheduleView} onViewChange={setScheduleView}
           onMatch={setMappingMaterial} onRefresh={() => void update("refresh", "POST", {})} />}
       {detail?.template === "drx_delfor" && (
         <>
@@ -656,7 +665,7 @@ export function DeliveryWorkspace({ heading, admin, draftId, onSelect, initialRe
   onArchive: (mailId: number) => void;
 }) {
   const [rows, setRows] = useState<Summary[]>();
-  const [status, setStatus] = useState<"all" | "review">(initialReview ? "review" : "all");
+  const [status, setStatus] = useState<"all" | "review" | "confirmed">(initialReview ? "review" : "all");
   const [search, setSearch] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [error, setError] = useState("");
@@ -667,7 +676,7 @@ export function DeliveryWorkspace({ heading, admin, draftId, onSelect, initialRe
   const batchSearch = useRef<HTMLInputElement>(null);
   const moreRequest = useRef<AbortController>(null);
   const forReview = status === "review";
-  const query = `/delivery?${new URLSearchParams({ review: String(forReview), q: searchQuery })}`;
+  const query = `/delivery?${new URLSearchParams({ review: String(forReview), confirmed: String(status === "confirmed"), q: searchQuery })}`;
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setSearchQuery(search.trim()), 220);
@@ -725,8 +734,8 @@ export function DeliveryWorkspace({ heading, admin, draftId, onSelect, initialRe
             <h2>交付批次</h2>
             <input ref={batchSearch} value={search} aria-label="搜索交付批次" placeholder="搜索客户、报文或附件" maxLength={120}
               onChange={(event) => setSearch(event.target.value)} />
-            <WorkbenchSelect label="按核对状态筛选" filter active={forReview} value={status}
-              options={[{ value: "all", label: "全部状态" }, { value: "review", label: "待核对" }]}
+            <WorkbenchSelect label="按交付状态筛选" filter active={status !== "all"} value={status}
+              options={[{ value: "all", label: "全部状态" }, { value: "review", label: "待核对" }, { value: "confirmed", label: "已确认" }]}
               onChange={(value) => {
                 if (value === status) return;
                 setRows(undefined);
@@ -739,15 +748,16 @@ export function DeliveryWorkspace({ heading, admin, draftId, onSelect, initialRe
           {error && <p className="notice failed" role="alert">{error}</p>}
           {rows?.map((row) => {
             const pending = row.pending_mappings + row.pending_entries;
+            const confirmed = row.confirmed_version;
             return (
               <button className={`delivery-batch ${row.id === draftId ? "selected" : ""}`} type="button"
                 key={row.id} aria-current={row.id === draftId ? "true" : undefined}
                 onClick={() => { setDeletedNotice(""); onSelect(row.id); }}>
-                <span><strong>{deliveryTemplates[row.template].title}</strong><span className={`delivery-badge ${pending ? "review" : ""}`}>
-                  {pending ? "待核对" : row.pending_shipments ? "待安排发货" : "草稿"}
+                <span><strong>{deliveryTemplates[row.template].title}</strong><span className={`delivery-badge ${!confirmed && pending ? "review" : ""}`}>
+                  {confirmed ? `已确认 V${confirmed}` : pending ? "待核对" : row.pending_shipments ? "待安排发货" : "草稿"}
                 </span></span>
                 <span>报文 {row.document_no ?? "—"}<time>{shortDate(row.document_date)}</time></span>
-                {(pending > 0 || row.pending_shipments > 0) && <small>{[
+                {!confirmed && (pending > 0 || row.pending_shipments > 0) && <small>{[
                   row.pending_mappings > 0 && `${row.pending_mappings} 个物料待核对`,
                   row.pending_entries > 0 && `${row.pending_entries} 条需求待核对`,
                   row.pending_shipments > 0 && `${row.pending_shipments} 条待安排发货`,

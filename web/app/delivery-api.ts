@@ -111,9 +111,10 @@ export type Summary = {
   pending_mappings: number;
   pending_entries: number;
   pending_shipments: number;
+  confirmed_version: number | null;
 };
 
-export type DeliveryDraft = Summary & {
+export type DeliveryDraft = Omit<Summary, "confirmed_version"> & {
   rule_version: string;
   rule_parameters: DeliveryLeadTimes;
   output_version: string;
