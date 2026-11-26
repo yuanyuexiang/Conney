@@ -6,7 +6,7 @@ import {
 import { Drawer, Modal, type RefSelectProps } from "antd";
 import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
-  addQuantities, entryLabels, mappingLabels, needsReview, reviewLabels, shortDate,
+  addQuantities, entryLabels, entryReviewReason, mappingLabels, needsReview, reviewLabels, shortDate,
   type DeliveryDraft, type Entry, type Material, type ReviewAction, type ReviewInput, type ReviewKind,
   type Shipment, type Summary,
 } from "./delivery-api";
@@ -19,6 +19,7 @@ import { chinaTime } from "./workbench-status";
 type GridMode = "demand" | "shipment";
 type Mode = GridMode | "review";
 type Selection = { materialId: number; entryIds: number[]; label: string };
+type ReviewGroup = { key: string; entries: { material: Material; entry: Entry }[] };
 
 const shipmentModes: { value: Shipment["mode"]; label: string }[] = [
   { value: "air", label: "空运 · 14 天" },
@@ -72,7 +73,7 @@ function DeliveryGrid({ draft, mode, onSelect }: {
     <div className="delivery-empty">
       <FileExcelOutlined aria-hidden="true" />
       <h3>还没有发货记录</h3>
-      <p>在客户需求里点开一笔已匹配的日期需求，填写有依据的发货日期和运输方式。</p>
+      <p>已保存的发货安排会显示在这里。</p>
     </div>
   );
 
@@ -181,9 +182,10 @@ function ShipmentForm({ entry, busy, error, onSave, onClose }: {
   );
 }
 
-function EntryReviewForm({ entry, kind, busy, error, onSave, onClose }: {
+function EntryReviewForm({ entry, kind, allowInclude = entry.unit === "C62", busy, error, onSave, onClose }: {
   entry: Entry;
   kind: ReviewKind;
+  allowInclude?: boolean;
   busy: boolean;
   error: string;
   onSave: (review: ReviewInput) => void;
@@ -191,7 +193,7 @@ function EntryReviewForm({ entry, kind, busy, error, onSave, onClose }: {
 }) {
   const [action, setAction] = useState(entry.review?.action);
   const actions: ReviewAction[] = kind === "code_review"
-    ? (entry.unit === "C62" ? ["include", "exclude"] : ["exclude"])
+    ? (allowInclude ? ["include", "exclude"] : ["exclude"])
     : (entry.earliest_date && entry.latest_date ? ["keep_interval", "set_date"] : ["set_date"]);
   const needsDate = action === "set_date" || (action === "include" && !entry.requested_date);
   const options = actions.map((value) => ({ value, label: reviewLabels[value] }));
@@ -258,6 +260,7 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
   const [shipmentError, setShipmentError] = useState("");
   const [reviewId, setReviewId] = useState<number>();
   const [reviewError, setReviewError] = useState("");
+  const [batchReview, setBatchReview] = useState<ReviewGroup>();
   const [busy, setBusy] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [deleteRevision, setDeleteRevision] = useState<number>();
@@ -285,7 +288,7 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
       setDetail(draft);
       onChange(draft);
       if (operation === "shipment") setShipmentId(undefined);
-      if (operation === "review") setReviewId(undefined);
+      if (operation === "review") { setReviewId(undefined); setBatchReview(undefined); }
     } catch (reason) {
       setOperationError(messageOf(reason));
       if (reason instanceof RelayRequestError && reason.status === 409) setReload((value) => value + 1);
@@ -348,18 +351,17 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
 
   const material = detail?.materials.find((item) => item.id === selection?.materialId);
   const entries = material?.entries.filter((entry) => selection?.entryIds.includes(entry.id)) ?? [];
-  const reviewCounts = new Map<Entry["state"], number>();
+  const groups = new Map<string, ReviewGroup>();
   for (const row of detail?.materials ?? []) {
     for (const entry of row.entries) {
-      if (needsReview(entry)) reviewCounts.set(entry.state, (reviewCounts.get(entry.state) ?? 0) + 1);
+      if (entry.state !== "code_review") continue;
+      const key = JSON.stringify([entry.code, entry.status_code, entry.unit]);
+      const group = groups.get(key);
+      if (group) group.entries.push({ material: row, entry });
+      else groups.set(key, { key, entries: [{ material: row, entry }] });
     }
   }
-  const reviewBreakdown = [
-    { label: "物料映射待核对", count: detail?.pending_mappings ?? 0, unit: "个" },
-    { label: "报文代码待确认", count: reviewCounts.get("code_review") ?? 0, unit: "条" },
-    { label: "日期区间待核对", count: reviewCounts.get("period_review") ?? 0, unit: "条" },
-    { label: "待补发货安排", count: reviewCounts.get("transport_missing") ?? 0, unit: "条" },
-  ].filter(({ count }) => count > 0);
+  const reviewGroups = [...groups.values()];
 
   return (
     <section className="delivery-detail" aria-label="交付批次详情">
@@ -402,6 +404,7 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
                 <button type="button" key={key} aria-pressed={mode === key} onClick={() => setMode(key)}>
                   {label}{key === "review" && detail.pending_mappings + detail.pending_entries > 0 &&
                     <span>{detail.pending_mappings + detail.pending_entries}</span>}
+                  {key === "shipment" && detail.pending_shipments > 0 && <span>{detail.pending_shipments}</span>}
                 </button>
               ))}
             </div>
@@ -411,16 +414,33 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
           </div>
           {mode === "review" ? (
             <div className="delivery-review-list">
-              {reviewBreakdown.length > 0 && <dl className="delivery-review-counts" aria-label="待核对原因">
-                {reviewBreakdown.map(({ label, count, unit }) => <div key={label}>
-                  <dt>{label}</dt><dd>{count} {unit}</dd>
-                </div>)}
-              </dl>}
-              {detail.materials.filter((row) => row.mapping_state !== "matched" || row.entries.some(needsReview)).map((row) => {
-                const pending = row.entries.filter(needsReview);
+              {reviewGroups.map((group) => {
+                const first = group.entries[0].entry;
+                return <section className="delivery-review-group" key={group.key}>
+                  <div className="section-heading">
+                    <h3>数量类型 {first.code ?? "缺失"} · 状态 {first.status_code ?? "缺失"} · {first.unit ?? "单位缺失"} · {group.entries.length} 条</h3>
+                    {admin && group.entries.length > 1 && <button type="button" className="button primary-button"
+                      disabled={busy} onClick={() => { setReviewError(""); setBatchReview(group); }}>批量确认</button>}
+                  </div>
+                  <p>{entryReviewReason(first)}</p>
+                  <details open={group.entries.length === 1 ? true : undefined}>
+                    <summary>查看逐条原报文</summary>
+                    <ul>{group.entries.map(({ material, entry }) => (
+                      <li key={entry.id}>
+                        <button type="button" className="text-button" onClick={() => show({
+                          materialId: material.id, entryIds: [entry.id], label: "报文代码待确认",
+                        })}>{material.customer_item ?? "未知物料"} · {addQuantities([entry])} {entry.unit ?? ""} · {entry.quantity_cell ?? "无来源坐标"}</button>
+                      </li>
+                    ))}</ul>
+                  </details>
+                </section>;
+              })}
+              {detail.materials.filter((row) => row.mapping_state !== "matched" ||
+                row.entries.some(({ state }) => state === "period_review")).map((row) => {
+                const pending = row.entries.filter(({ state }) => state === "period_review");
                 return (
                   <div className="delivery-review-row" key={row.id}>
-                    <div><strong>{row.customer_item ?? "缺少客户料号"}</strong><small>订单 {row.order_no ?? "—"}{pending.length > 0 && ` · ${pending.length} 条需求待处理`}</small></div>
+                    <div><strong>{row.customer_item ?? "缺少客户料号"}</strong><small>订单 {row.order_no ?? "—"}{pending.length > 0 && ` · ${pending.length} 条缺少交货日或完整区间`}</small></div>
                     <span className={`delivery-badge ${row.mapping_state === "matched" ? "" : "review"}`}>{mappingLabels[row.mapping_state]}</span>
                     {admin && row.mapping_state === "missing" && row.customer_item && row.order_no &&
                       <button type="button" className="button" disabled={busy} onClick={() => setMappingMaterial(row)}>补充映射</button>}
@@ -434,9 +454,26 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
               })}
               {detail.pending_mappings + detail.pending_entries === 0 && <p className="empty">该批次没有待核对记录</p>}
             </div>
-          ) : (
+          ) : <>
+            {mode === "shipment" && detail.pending_shipments > 0 && (
+              <section className="delivery-review-list delivery-shipment-pending" aria-label="待安排发货">
+                <h3>待安排发货 · {detail.pending_shipments} 条</h3>
+                <p>这些需求缺少发货日和运输方式。</p>
+                {detail.materials.map((row) => {
+                  const pending = row.entries.filter(({ state }) => state === "transport_missing");
+                  if (!pending.length) return null;
+                  return <div className="delivery-review-row" key={row.id}>
+                    <div><strong>{row.customer_item ?? "未知物料"}</strong><small>订单 {row.order_no ?? "—"} · {pending.length} 条</small></div>
+                    {row.mapping_state !== "matched" && <span className="delivery-badge review">{mappingLabels[row.mapping_state]}</span>}
+                    <button type="button" className="text-button" onClick={() => show({
+                      materialId: row.id, entryIds: pending.map(({ id: entryId }) => entryId), label: "待安排发货",
+                    })}>{admin && row.mapping_state === "matched" ? "安排发货" : "查看来源"}</button>
+                  </div>;
+                })}
+              </section>
+            )}
             <DeliveryGrid key={mode} draft={detail} mode={mode} onSelect={show} />
-          )}
+          </>}
         </>
       )}
       <Drawer open={selection !== undefined} title="数量与来源" size={540} onClose={() => setSelection(undefined)}>
@@ -452,16 +489,22 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
           </div>
           {entries.map((entry) => {
             const kind = entry.review?.kind ??
-              (entry.state === "code_review" || entry.state === "period_review" ? entry.state : undefined);
+              (entry.state === "code_review" ? "code_review" :
+                entry.state === "period_review" || entry.state === "confirmed_interval" ? "period_review" : undefined);
+            const reason = entryReviewReason(entry);
             return (
               <article className="delivery-source-row" key={entry.id}>
                 <div className="delivery-source-title">
                   <strong>{addQuantities([entry])} <small>{entry.unit ?? ""}</small></strong>
-                  <span className={`delivery-badge ${needsReview(entry) ? "review" : ""}`}>{entryLabels[entry.state]}</span>
+                  <span className={`delivery-badge ${needsReview(entry) ? "review" : ""}`}>
+                    {entry.state === "confirmed_interval" && !entry.review ? "区间预测" : entryLabels[entry.state]}
+                  </span>
                 </div>
+                {reason && <p className="delivery-entry-reason">{reason}</p>}
                 <dl>
                   <div><dt>附件原值</dt><dd>{entry.raw_quantity ?? entry.quantity}</dd></div>
-                  <div><dt>原始日期</dt><dd>{entry.requested_date ?? (entry.earliest_date || entry.latest_date ? entry.period : "—")}</dd></div>
+                  <div><dt>原始日期</dt><dd>{entry.requested_date ?? (entry.earliest_date || entry.latest_date
+                    ? `${entry.earliest_date ?? "缺失"} ~ ${entry.latest_date ?? "缺失"}` : "—")}</dd></div>
                   <div><dt>数量位置</dt><dd className="source-coordinate">{entry.quantity_cell ?? "—"}</dd></div>
                   <div><dt>日期位置</dt><dd className="source-coordinate">{[entry.date_cell, entry.end_date_cell].filter(Boolean).join(" / ") || "—"}</dd></div>
                   <div><dt>数量类型 / 状态</dt><dd>{entry.code ?? "—"} / {entry.status_code ?? "—"}</dd></div>
@@ -478,7 +521,8 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
                     onSave={(review) => void update(`reviews/${entry.id}`, "PUT", { review }, "review")} />
                   : <button type="button" className="button" disabled={busy} onClick={() => {
                     setShipmentId(undefined); setReviewError(""); setReviewId(entry.id);
-                  }}>{entry.review ? "修改核对结论" : kind === "code_review" ? "确认报文代码" : "核对日期区间"}</button>)}
+                  }}>{entry.review ? "修改核对结论" : kind === "code_review" ? "确认报文代码" :
+                    entry.state === "confirmed_interval" ? "补充具体交货日" : "核对日期区间"}</button>)}
                 {admin && reviewId !== entry.id && material.mapping_state === "matched" && (entry.state === "scheduled" || entry.state === "transport_missing") &&
                   (shipmentId === entry.id ? <ShipmentForm entry={entry} busy={busy} error={shipmentError}
                     onClose={() => setShipmentId(undefined)}
@@ -491,6 +535,17 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
           })}
         </>}
       </Drawer>
+      {batchReview && <Modal title={`批量确认 ${batchReview.entries.length} 条报文记录`} open width={480} footer={null}
+        mask={{ closable: false }} closable={!busy} keyboard={!busy}
+        onCancel={() => { if (!busy) setBatchReview(undefined); }}>
+        <p>{entryReviewReason(batchReview.entries[0].entry)}所选结论将应用到这一组待确认记录。</p>
+        <EntryReviewForm entry={batchReview.entries[0].entry} kind="code_review" busy={busy} error={reviewError}
+          allowInclude={batchReview.entries.every(({ entry }) => entry.unit === "C62" && Boolean(entry.requested_date))}
+          onClose={() => setBatchReview(undefined)}
+          onSave={(review) => void update("reviews", "PUT", {
+            review, entry_ids: batchReview.entries.map(({ entry }) => entry.id),
+          }, "review")} />
+      </Modal>}
       {mappingMaterial && <MappingDialog
         existing={mappingMaterial.mapping ?? undefined}
         initial={mappingMaterial.mapping ?? { customer: "drx", customer_item: mappingMaterial.customer_item ?? "",
@@ -612,11 +667,14 @@ export function DeliveryWorkspace({ heading, admin, draftId, onSelect, initialRe
               <button className={`delivery-batch ${row.id === draftId ? "selected" : ""}`} type="button"
                 key={row.id} aria-current={row.id === draftId ? "true" : undefined}
                 onClick={() => { setDeletedNotice(""); onSelect(row.id); }}>
-                <span><strong>德科 DRX</strong><span className={`delivery-badge ${pending ? "review" : ""}`}>{pending ? "待核对" : "草稿"}</span></span>
+                <span><strong>德科 DRX</strong><span className={`delivery-badge ${pending ? "review" : ""}`}>
+                  {pending ? "待核对" : row.pending_shipments ? "待安排发货" : "草稿"}
+                </span></span>
                 <span>报文 {row.document_no ?? "—"}<time>{shortDate(row.document_date)}</time></span>
-                {pending > 0 && <small>{[
+                {(pending > 0 || row.pending_shipments > 0) && <small>{[
                   row.pending_mappings > 0 && `${row.pending_mappings} 个物料待核对`,
-                  row.pending_entries > 0 && `${row.pending_entries} 条需求待处理`,
+                  row.pending_entries > 0 && `${row.pending_entries} 条需求待核对`,
+                  row.pending_shipments > 0 && `${row.pending_shipments} 条待安排发货`,
                 ].filter(Boolean).join(" · ")}</small>}
               </button>
             );

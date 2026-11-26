@@ -90,9 +90,15 @@
 .delivery-empty h2, .delivery-empty h3 { font-size: 1rem; }
 .delivery-empty p { max-width: 30rem; color: var(--muted); font-size: .85rem; }
 .delivery-review-list { padding: .5rem 1rem .8rem; }
-.delivery-review-counts { display: flex; flex-wrap: wrap; gap: .55rem; margin: .35rem 0 .6rem; }
-.delivery-review-counts > div { display: flex; align-items: baseline; gap: .55rem; padding: .42rem .6rem; border: 1px solid var(--border); border-radius: 6px; background: #f7fafc; color: var(--secondary); font-size: .8rem; }
-.delivery-review-counts dd { margin: 0; color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; }
+.delivery-review-group { margin: .35rem 0 .65rem; padding: .75rem; border: 1px solid var(--border); border-radius: 8px; background: #f7fafc; }
+.delivery-review-group .section-heading { flex-wrap: wrap; }
+.delivery-review-group h3, .delivery-shipment-pending > h3 { font-size: .9rem; }
+.delivery-review-group p, .delivery-shipment-pending > p, .delivery-entry-reason { color: var(--muted); font-size: .83rem; }
+.delivery-review-group p, .delivery-review-group details, .delivery-entry-reason { margin-top: .45rem; }
+.delivery-review-group summary { cursor: pointer; color: var(--blue-dark); font-size: .82rem; }
+.delivery-review-group ul { margin: .3rem 0 0; padding-inline-start: 1.2rem; }
+.delivery-shipment-pending { border-bottom: 1px solid var(--border); padding-top: .9rem; }
+.delivery-shipment-pending > p { margin-top: .3rem; }
 .delivery-review-row { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem; padding: .75rem 0; border-bottom: 1px solid var(--border); }
 .delivery-review-row > div { flex: 1 1 180px; }
 .delivery-review-row small { display: block; margin-top: .18rem; color: var(--muted); }

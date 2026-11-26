@@ -171,6 +171,7 @@ def test_delivery_draft_from_archive_to_generation(
         ["1", "1", "0", "C62", "20261204"],
         ["4", "1", "300", "C62", None, "20261205", "20261210"],
         ["10", "83", "15", "C62", "20261116"],
+        ["10", "83", "12", "C62", "20261123"],
     ]:
         sheet.append(row)
     content = BytesIO()
@@ -212,7 +213,8 @@ def test_delivery_draft_from_archive_to_generation(
         assert [entry["state"] for entry in material["entries"]] == [
             "transport_missing",
             "recorded_zero",
-            "period_review",
+            "confirmed_interval",
+            "code_review",
             "code_review",
         ]
         entry_id = material["entries"][0]["id"]
@@ -367,7 +369,8 @@ def test_delivery_draft_from_archive_to_generation(
             assert manager.put(interval_url, json=keep).status_code == 403
             kept = manager.put(interval_url, headers=_BROWSER, json=keep).json()
             assert kept["materials"][0]["entries"][2]["state"] == "confirmed_interval"
-            assert kept["pending_entries"] == generated["pending_entries"] - 1
+            assert kept["pending_entries"] == generated["pending_entries"] == 2
+            assert kept["pending_shipments"] == generated["pending_shipments"] == 1
             assert manager.put(interval_url, headers=_BROWSER, json=keep).status_code == 409
 
             date_review = {
@@ -388,14 +391,26 @@ def test_delivery_draft_from_archive_to_generation(
             assert interval["earliest_date"] == "2026-12-05"
             assert interval["period"] == "2026-12-07"
             assert interval["state"] == "transport_missing"
+            assert dated["pending_entries"] == 2
+            assert dated["pending_shipments"] == 2
 
             code_review = {
                 "revision": dated["revision"],
                 "review": {"action": "exclude", "source_note": "=Source confirmation"},
             }
-            excluded = manager.put(code_url, headers=_BROWSER, json=code_review).json()
+            group_url = f"{draft_url}/reviews"
+            mixed = {**code_review, "entry_ids": [entries[2]["id"], entries[3]["id"]]}
+            assert manager.put(group_url, headers=_BROWSER, json=mixed).status_code == 422
+            assert reader.get(draft_url).json() == dated
+            group = {**code_review, "entry_ids": [entries[3]["id"], entries[4]["id"]]}
+            assert reader.put(group_url, headers=_BROWSER, json=group).status_code == 403
+            excluded = manager.put(group_url, headers=_BROWSER, json=group).json()
             assert excluded["materials"][0]["entries"][3]["state"] == "excluded"
-            assert excluded["pending_entries"] == dated["pending_entries"] - 1
+            assert excluded["materials"][0]["entries"][4]["state"] == "excluded"
+            assert excluded["pending_entries"] == 0
+            assert excluded["pending_shipments"] == 2
+            assert reader.get("/api/v1/delivery?review=true").json() == []
+            assert reader.get("/api/v1/delivery").json()[0]["pending_shipments"] == 2
             download = reader.get(
                 f"{draft_url}/draft.xlsx", params={"revision": excluded["revision"]}
             )
@@ -409,6 +424,8 @@ def test_delivery_draft_from_archive_to_generation(
             code_review["review"]["action"] = "include"
             included = manager.put(code_url, headers=_BROWSER, json=code_review).json()
             assert included["materials"][0]["entries"][3]["state"] == "transport_missing"
+            assert included["pending_shipments"] == 3
+            assert included["pending_entries"] == 0
             assigned = manager.put(
                 f"{draft_url}/shipments/{entries[3]['id']}",
                 headers=_BROWSER,

@@ -88,6 +88,7 @@ export type Summary = {
   document_date: string | null;
   pending_mappings: number;
   pending_entries: number;
+  pending_shipments: number;
 };
 
 export type DeliveryDraft = Summary & {
@@ -122,7 +123,15 @@ export const reviewLabels: Record<ReviewAction, string> = {
 };
 
 export function needsReview(entry: Entry) {
-  return entry.state === "transport_missing" || entry.state === "period_review" || entry.state === "code_review";
+  return entry.state === "period_review" || entry.state === "code_review";
+}
+
+export function entryReviewReason(entry: Entry) {
+  if (entry.state === "period_review") return "原报文缺少明确的交货日或完整日期区间。";
+  if (entry.state === "code_review") return entry.unit === "C62"
+    ? "德科尚未确认这组数量类型和状态应如何计入客户需求。"
+    : `报文单位 ${entry.unit ?? "（缺失）"} 缺少已验证的计量口径。`;
+  return undefined;
 }
 
 export function shortDate(value: string | null) {

@@ -197,6 +197,11 @@ def _source_sheet(sheet: Worksheet, draft: DraftSnapshot) -> None:
             shipment = entry.shipment
             mapping = material.mapping
             review = entry.review
+            state = (
+                "区间预测"
+                if entry.state == "confirmed_interval" and not review
+                else states[entry.state]
+            )
             row = sheet.max_row + 1
             for column, value in (
                 (1, material.customer_item),
@@ -213,7 +218,7 @@ def _source_sheet(sheet: Worksheet, draft: DraftSnapshot) -> None:
                 (7, entry.status_code),
                 (11, entry.quantity_cell),
                 (12, " / ".join(spot for spot in (entry.date_cell, entry.end_date_cell) if spot)),
-                (13, states[entry.state] if material.mapping_state == "matched" else "物料待核对"),
+                (13, state if material.mapping_state == "matched" else "物料待核对"),
                 (15, ("空运" if shipment.mode == "air" else "海运") if shipment else None),
                 (18, shipment.source_note if shipment else None),
                 (19, shipment.entered_by if shipment else None),

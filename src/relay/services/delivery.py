@@ -29,7 +29,7 @@ EntryState = Literal[
 EntryReviewKind = Literal["code_review", "period_review"]
 EntryReviewAction = Literal["include", "exclude", "set_date", "keep_interval"]
 
-RULE_VERSION = "drx-1"
+RULE_VERSION = "drx-2"
 
 
 def matching_order(customer: Customer, order: str | None) -> str | None:
@@ -170,6 +170,7 @@ class DraftSnapshot(BaseModel):
     materials: list[DraftMaterial]
     pending_mappings: int
     pending_entries: int
+    pending_shipments: int = 0
 
 
 def find_drx_mapping(
@@ -223,19 +224,31 @@ def entry_state(
     status_code: str | None,
     requested: date | None,
     quantity: Decimal,
+    earliest: date | None,
+    latest: date | None,
 ) -> EntryState:
     if code != "1" or unit != "C62" or status_code not in {"1", "4"}:
         return "code_review"
     if requested is None:
-        return "period_review"
+        return (
+            "confirmed_interval" if earliest and latest and earliest <= latest else "period_review"
+        )
     return "recorded_zero" if quantity == 0 else "transport_missing"
 
 
 def review_kind(entry: DraftEntry) -> EntryReviewKind | None:
     state = entry_state(
-        entry.code, entry.unit, entry.status_code, entry.requested_date, entry.quantity
+        entry.code,
+        entry.unit,
+        entry.status_code,
+        entry.requested_date,
+        entry.quantity,
+        entry.earliest_date,
+        entry.latest_date,
     )
-    return state if state == "code_review" or state == "period_review" else None
+    if state == "code_review":
+        return "code_review"
+    return "period_review" if state in {"period_review", "confirmed_interval"} else None
 
 
 def valid_entry_review(entry: DraftEntry, kind: EntryReviewKind, values: EntryReviewInput) -> bool:

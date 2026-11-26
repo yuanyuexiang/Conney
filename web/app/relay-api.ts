@@ -45,6 +45,7 @@ const messages: Record<string, string> = {
   delivery_entry_requires_review: "请先确认物料匹配、数量代码和交货日期。",
   delivery_review_unavailable: "当前记录无法核对。已有发货安排时，请先清除该安排。",
   invalid_delivery_review: "请检查核对选项和依据。确认的交货日须在原报文区间内。",
+  invalid_delivery_review_group: "批量确认只适用于类型、状态和单位一致的待确认记录，请更新列表后重试。",
 };
 
 export class RelayRequestError extends Error {

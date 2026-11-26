@@ -9,6 +9,7 @@ from sqlalchemy import Connection, RowMapping, text
 from sqlalchemy.exc import IntegrityError
 
 from relay.api.auth import AdminUser, SignedInUser, require_browser_request
+from relay.auth.accounts import User
 from relay.database.session import get_engine
 from relay.services.delivery import (
     RULE_VERSION,
@@ -18,6 +19,7 @@ from relay.services.delivery import (
     DraftSnapshot,
     EntryReview,
     EntryReviewInput,
+    EntryReviewKind,
     MappingEdit,
     MappingValues,
     MaterialCandidate,
@@ -59,6 +61,7 @@ class DraftSummary(BaseModel):
     document_date: str | None
     pending_mappings: int
     pending_entries: int
+    pending_shipments: int
     updated_at: datetime
 
 
@@ -77,6 +80,10 @@ class ChangeShipment(RefreshDraft):
 
 class ConfirmReview(RefreshDraft):
     review: EntryReviewInput
+
+
+class ConfirmBatchReview(ConfirmReview):
+    entry_ids: Annotated[list[int], Field(min_length=2, max_length=5000)]
 
 
 @router.get("/material-mappings")
@@ -218,14 +225,25 @@ def _snapshot(row: RowMapping) -> DeliveryDraft:
     )
 
 
-def _counts(materials: list[DraftMaterial]) -> tuple[int, int]:
+def _counts(materials: list[DraftMaterial]) -> tuple[int, int, int]:
     return (
         sum(material.mapping_state != "matched" for material in materials),
         sum(
-            entry.state in {"code_review", "period_review", "transport_missing"}
+            entry.state in {"code_review", "period_review"}
             for material in materials
             for entry in material.entries
         ),
+        sum(
+            entry.state == "transport_missing"
+            for material in materials
+            for entry in material.entries
+        ),
+    )
+
+
+def _recount(draft: DraftSnapshot) -> None:
+    draft.pending_mappings, draft.pending_entries, draft.pending_shipments = _counts(
+        draft.materials
     )
 
 
@@ -294,6 +312,8 @@ def _build_drx_snapshot(
             record["status_code"],
             record["requested_date"],
             record["quantity"],
+            record["earliest_date"],
+            record["latest_date"],
         )
         entry = DraftEntry.model_validate(
             {
@@ -305,7 +325,7 @@ def _build_drx_snapshot(
             }
         )
         prior = previous_entries.get(entry.id)
-        if prior and prior.review and prior.review.kind == state:
+        if prior and prior.review and prior.review.kind == review_kind(entry):
             if valid_entry_review(entry, prior.review.kind, prior.review):
                 apply_entry_review(entry, prior.review)
         if prior and prior.shipment and entry.state == "transport_missing":
@@ -334,7 +354,7 @@ def _build_drx_snapshot(
             )
         )
     fields = source["source_fields"]
-    pending_mappings, pending_entries = _counts(result)
+    pending_mappings, pending_entries, pending_shipments = _counts(result)
     return DraftSnapshot(
         rule_version=RULE_VERSION,
         attachment_id=source["attachment_id"],
@@ -345,6 +365,7 @@ def _build_drx_snapshot(
         materials=result,
         pending_mappings=pending_mappings,
         pending_entries=pending_entries,
+        pending_shipments=pending_shipments,
     )
 
 
@@ -408,7 +429,9 @@ def list_drafts(
                 "snapshot->>'document_no' AS document_no, "
                 "snapshot->>'document_date' AS document_date, "
                 "snapshot->>'pending_mappings' AS pending_mappings, "
-                "snapshot->>'pending_entries' AS pending_entries FROM delivery_drafts "
+                "snapshot->>'pending_entries' AS pending_entries, "
+                "COALESCE((snapshot->>'pending_shipments')::integer, 0) AS pending_shipments "
+                "FROM delivery_drafts "
                 "WHERE deleted_at IS NULL "
                 "AND (CAST(:before AS bigint) IS NULL OR run_id < :before) "
                 "AND (:q = '' OR strpos(lower(concat_ws(' ', snapshot->>'filename', "
@@ -512,7 +535,7 @@ def change_shipment(
         )
         entry.state = "scheduled" if entry.shipment else "transport_missing"
         entry.eta = entry.shipment.arrival() if entry.shipment else None
-        draft.pending_mappings, draft.pending_entries = _counts(draft.materials)
+        _recount(draft)
         return _replace_draft(connection, run_id, draft, actor.id)
 
 
@@ -535,19 +558,51 @@ def confirm_review(
         kind = review_kind(entry)
         if kind is None or entry.shipment is not None:
             raise HTTPException(409, detail="delivery_review_unavailable")
-        if not valid_entry_review(entry, kind, request.review):
-            raise HTTPException(422, detail="invalid_delivery_review")
-        apply_entry_review(
-            entry,
-            EntryReview(
-                **request.review.model_dump(),
-                kind=kind,
-                reviewed_by=actor.username,
-                reviewed_at=datetime.now(UTC),
-            ),
-        )
-        draft.pending_mappings, draft.pending_entries = _counts(draft.materials)
-        return _replace_draft(connection, run_id, draft, actor.id)
+        return _save_reviews(connection, draft, [entry], kind, request.review, actor)
+
+
+@router.put("/delivery/{run_id}/reviews", dependencies=_BROWSER)
+def confirm_batch_review(
+    run_id: int, request: ConfirmBatchReview, actor: AdminUser
+) -> DeliveryDraft:
+    with get_engine().begin() as connection:
+        draft = _snapshot(_draft_row(connection, run_id, lock=True))
+        _check_revision(draft, request.revision)
+        selected = set(request.entry_ids)
+        entries = [
+            entry
+            for material in draft.materials
+            for entry in material.entries
+            if entry.id in selected
+        ]
+        codes = {(entry.code, entry.status_code, entry.unit) for entry in entries}
+        if (
+            len(entries) != len(request.entry_ids)
+            or len(codes) != 1
+            or any(entry.state != "code_review" for entry in entries)
+            or request.review.delivery_date is not None
+        ):
+            raise HTTPException(422, detail="invalid_delivery_review_group")
+        return _save_reviews(connection, draft, entries, "code_review", request.review, actor)
+
+
+def _save_reviews(
+    connection: Connection,
+    draft: DeliveryDraft,
+    entries: list[DraftEntry],
+    kind: EntryReviewKind,
+    values: EntryReviewInput,
+    actor: User,
+) -> DeliveryDraft:
+    if not all(valid_entry_review(entry, kind, values) for entry in entries):
+        raise HTTPException(422, detail="invalid_delivery_review")
+    review = EntryReview(
+        **values.model_dump(), kind=kind, reviewed_by=actor.username, reviewed_at=datetime.now(UTC)
+    )
+    for entry in entries:
+        apply_entry_review(entry, review)
+    _recount(draft)
+    return _replace_draft(connection, draft.id, draft, actor.id)
 
 
 @router.get("/delivery/{run_id}/draft.xlsx")
