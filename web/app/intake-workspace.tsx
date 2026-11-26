@@ -37,6 +37,7 @@ type Attachment = {
   review_date_code: string | null;
   template: string | null;
   parser_version: string | null;
+  can_generate_draft: boolean;
 };
 type Quantity = {
   id: number;
@@ -329,11 +330,9 @@ function MailDetail({ mail, refreshKey, onDraftOpened, onTemplate }: {
               <AttachmentStatus attachment={attachment} />
             </div>
             <Diagnosis attachment={attachment} />
-            {attachment.template === "kroschu_4905" && attachment.job_state === "succeeded" &&
-              <p className="field-hint attachment-output-status">原始数量已入库。科伯舒特交付表生成待接入。</p>}
             {attachment.size_bytes !== null && (
               <div className="attachment-actions">
-                {onDraftOpened && attachment.template === "drx_delfor" && attachment.job_state === "succeeded" &&
+                {onDraftOpened && attachment.can_generate_draft &&
                   <button type="button" className="button primary-button" disabled={openingDraft !== undefined}
                     onClick={() => void openDraft(attachment)}>
                     <FileExcelOutlined aria-hidden="true" /> {openingDraft === attachment.id ? "正在打开…" : "生成交付草稿"}

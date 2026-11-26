@@ -42,6 +42,8 @@
 .delivery-batch { display: grid; gap: .36rem; width: calc(100% - 1rem); padding: .74rem .62rem; margin: .5rem; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--ink); text-align: left; }
 .delivery-batch > span { display: flex; justify-content: space-between; align-items: center; gap: .3rem; }
 .delivery-batch > span:nth-child(2), .delivery-batch small { color: var(--muted); font-size: .75rem; }
+.delivery-batch > span:nth-child(2) { flex-wrap: wrap; }
+.delivery-batch time { white-space: nowrap; }
 .delivery-batch:hover { background: #eef4f8; }
 .delivery-batch.selected { border-color: #a9cbe0; background: #e9f4fc; }
 .batch-more { margin: .3rem .75rem; }
@@ -270,3 +272,16 @@
   .mapping-field-grid { grid-template-columns: minmax(0, 1fr); gap: .68rem; }
   .delivery-filters > input { max-width: 170px; }
 }
+
+.schedule-tools { display: flex; flex-wrap: wrap; align-items: center; gap: .55rem 1rem; padding: .75rem; }
+.schedule-tools input { width: min(100%, 18rem); min-height: 38px; padding: .4rem .6rem; border: 1px solid var(--border); border-radius: 6px; color: var(--ink); }
+.schedule-tools .field-hint { flex: 1 1 14rem; }
+.schedule-table { border-top: 1px solid var(--border); }
+.schedule-table table { min-width: 690px; }
+.schedule-table :is(th, td) { padding: .6rem .7rem; }
+.schedule-table td small { display: block; color: var(--muted); }
+.schedule-table details summary { color: var(--blue-dark); cursor: pointer; }
+.schedule-table details p { color: var(--secondary); max-width: 30rem; overflow-wrap: anywhere; }
+.schedule-issue { display: block; color: #795208; font-size: .84rem; }
+.schedule-mapping-list { margin: 0 .75rem .75rem; border: 1px solid var(--border); border-radius: 7px; padding: .65rem; max-height: 24rem; overflow: auto; }
+.schedule-mapping-list h3 { font-size: 1rem; margin-bottom: .4rem; }

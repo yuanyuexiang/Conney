@@ -18,7 +18,7 @@ docker compose --env-file .env -f deployments/docker-compose.yml up --build --wa
 
 运行状态页每 30 秒刷新，也可手动重新检查。后台进程超过 75 秒未上报心跳时显示「心跳超时」。邮箱状态依据最近一次只读同步结果，附件归档使用最近一份原件进行完整性检查。
 
-## 物料匹配和德科交付草稿
+## 物料匹配和交付草稿
 
 管理员可在「物料匹配 → 待匹配」按客户和料号检索原始 Excel 提取的记录。点击「补录康尼料号」会带入已有的订单和料号。保存后可在「已匹配」查看。来源列保留报文文件名及客户料号所在的单元格。
 
@@ -30,9 +30,9 @@ docker compose -f deployments/docker-compose.yml run --rm --no-deps \
   api python -m relay.workers.import_materials /tmp/material-samples
 ```
 
-管理员从「收件档案」打开已解析的德科附件，选择「生成交付草稿」。在「待核对」里可就地补录映射，也可以在「物料匹配」统一维护。点击需求数量可查看来源单元格。对已匹配且有明确日期的需求，可录入有依据的发货日、运输方式及可选的人工 ETA。
+管理员从「收件档案」打开已解析的合同模板附件，选择「生成交付草稿」。在「待核对」里可就地补录映射，也可以在「物料匹配」统一维护。草稿可查看来源单元格。DRX 可录入有依据的发货日、运输方式及人工 ETA。
 
-「下载草稿」生成包含「给生产」和「需求与来源」的 XLSX。「给生产」的发货数量来自已录入发货安排的记录，其余需求可在「需求与来源」核对。查询用户可查看和下载已生成的草稿。其他客户的生成工作见[工作地图](docs/工作地图.md#当前工作包)。
+「下载草稿」按模板生成 XLSX。DRX 输出「给生产」及来源，科伯舒特输出交货日、ISO 周和 ETD 月汇总，JLR 两类报文各自输出周需求，Vitesco 输出周预测和库存测算。查询用户可查看并下载草稿。验收口径见[工作地图](docs/工作地图.md#交付规则与开发验收)。
 
 管理员可点击「确认交付」并指定核验交货截至日。通过核验后，Relay 保存带版本的确认版 XLSX；「下载确认版」与「邮件发送」使用同一文件。管理员在「邮箱配置 → 发件与部门」保存并测试 SMTP 登录，维护部门收件组。263 使用配置的内部收件域名，163 测试模式限制为一个明确填写的地址。Compose 的 `delivery-worker` 按地址处理队列，批次「确认版本」内可查发送记录及补发明确失败的地址。
 
@@ -60,7 +60,7 @@ uv run --locked python -c 'from cryptography.fernet import Fernet; print(Fernet.
 
 目前一次采集一个邮箱。切换邮箱地址或 IMAP 服务器时需要填写新授权码。保存新配置会暂停采集，重新测试后再启用。已归档邮件和各邮箱的同步游标继续保留。暂停操作会停止后续邮件读取，正在读取的单封邮件可以收尾。
 
-Mail Worker 使用只读 IMAP，以 UID 游标增量同步。服务器返回的 UIDVALIDITY 变化时暂停该文件夹的同步，等待核对旧游标。Parser Worker 支持 Vitesco、DRX、JLR DELFOR、JLR DELJIT 和 Kroschu 五份样本对应的结构。JLR 和 Kroschu 的六位日期原样保留，等客户确认世纪规则后再规范化。归档卷 `attachment-archive` 和数据库卷 `postgres-data` 应成对备份与恢复。
+Mail Worker 使用只读 IMAP，以 UID 游标增量同步。服务器返回的 UIDVALIDITY 变化时暂停该文件夹的同步，等待核对旧游标。Parser Worker 支持 Vitesco、DRX、JLR DELFOR、JLR DELJIT 和 Kroschu 五种结构。JLR 和 Kroschu 六位日期解析时保留原值，草稿按报文日期换算并保留来源。归档卷 `attachment-archive` 和数据库卷 `postgres-data` 应成对备份与恢复。
 
 可以用本地 `.eml` 重放验证，无需连接邮箱。以下示例在仓库根目录运行，替换邮件文件路径即可，同一 UID 重放不会新增接收记录：
 

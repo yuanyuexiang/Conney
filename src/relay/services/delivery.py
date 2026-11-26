@@ -14,6 +14,16 @@ from pydantic import (
 )
 
 Customer = Literal["drx", "kroschu", "jlr", "vitesco", "zf"]
+DeliveryTemplate = Literal[
+    "drx_delfor", "kroschu_4905", "jlr_delfor", "jlr_deljit", "vitesco_delfor"
+]
+DELIVERY_CUSTOMERS: dict[DeliveryTemplate, Customer] = {
+    "drx_delfor": "drx",
+    "kroschu_4905": "kroschu",
+    "jlr_delfor": "jlr",
+    "jlr_deljit": "jlr",
+    "vitesco_delfor": "vitesco",
+}
 Identifier = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
 PackSize = Annotated[int, Field(gt=0, le=1_000_000_000)]
 MappingState = Literal["matched", "missing", "ambiguous", "supplier_mismatch"]
@@ -137,6 +147,26 @@ class EntryReview(EntryReviewInput):
     reviewed_at: datetime
 
 
+PlanQuantityKind = Literal[
+    "day", "week", "interval", "special", "placeholder", "auxiliary", "review"
+]
+
+
+class PlanQuantity(BaseModel):
+    kind: PlanQuantityKind
+    amount: Decimal | None = None
+    start: date | None = None
+    end: date | None = None
+    raw_start: str | None = None
+    raw_end: str | None = None
+    basis: str
+    issue: str | None = None
+
+    @field_serializer("amount")
+    def serialize_amount(self, amount: Decimal | None) -> str | None:
+        return format(amount, "f") if amount is not None else None
+
+
 class DraftEntry(BaseModel):
     id: int
     quantity: Decimal
@@ -155,6 +185,7 @@ class DraftEntry(BaseModel):
     shipment: Shipment | None = None
     eta: date | None = None
     review: EntryReview | None = None
+    plan: PlanQuantity | None = None
 
     @field_serializer("quantity")
     def serialize_quantity(self, quantity: Decimal) -> str:
@@ -175,6 +206,7 @@ class DraftMaterial(BaseModel):
 
 
 class DraftSnapshot(BaseModel):
+    template: DeliveryTemplate = "drx_delfor"
     rule_version: str
     rule_parameters: DeliveryLeadTimes = Field(default_factory=DeliveryLeadTimes)
     output_version: str = DRX_OUTPUT_VERSION
@@ -187,11 +219,13 @@ class DraftSnapshot(BaseModel):
     pending_mappings: int
     pending_entries: int
     pending_shipments: int = 0
+    parser_version: str | None = None
 
 
-def find_drx_mapping(
+def find_material_mapping(
     mappings: Iterable[MaterialMapping],
     *,
+    customer: Customer,
     item: str | None,
     order: str | None,
     order_line: str | None,
@@ -200,18 +234,23 @@ def find_drx_mapping(
 ) -> tuple[MappingState, MaterialMapping | None]:
     if not item or not order:
         return "missing", None
-    key = matching_order("drx", order)
+    key = matching_order(customer, order)
     candidates: dict[int, list[MaterialMapping]] = defaultdict(list)
     for mapping in mappings:
+        order_required = customer == "drx" or mapping.order_no is not None
         if (
-            mapping.customer != "drx"
+            mapping.customer != customer
             or mapping.customer_item != item
-            or matching_order("drx", mapping.order_no) != key
+            or (order_required and matching_order(customer, mapping.order_no) != key)
             or (mapping.order_line is not None and mapping.order_line != order_line)
             or (mapping.ship_to is not None and mapping.ship_to != ship_to)
         ):
             continue
-        specificity = int(mapping.order_line is not None) + int(mapping.ship_to is not None)
+        specificity = (
+            4 * int(mapping.order_no is not None)
+            + int(mapping.order_line is not None)
+            + int(mapping.ship_to is not None)
+        )
         candidates[specificity].append(mapping)
     if not candidates:
         return "missing", None

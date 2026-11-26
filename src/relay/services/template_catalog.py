@@ -1,6 +1,9 @@
+from typing import TypedDict
+
 from pydantic import BaseModel
 
 from relay.services.delivery import DRX_OUTPUT_VERSION
+from relay.services.schedule_delivery import SCHEDULE_OUTPUTS, ScheduleCode
 
 
 class WorkbookTemplate(BaseModel):
@@ -12,6 +15,16 @@ class WorkbookTemplate(BaseModel):
     rule_notes: tuple[str, ...]
     output_version: str | None = None
     output_sheets: tuple[str, ...] = ()
+
+
+class _ScheduleOutputFields(TypedDict):
+    output_version: str
+    output_sheets: tuple[str, ...]
+
+
+def _schedule_output(code: ScheduleCode) -> _ScheduleOutputFields:
+    output = SCHEDULE_OUTPUTS[code]
+    return {"output_version": output.version(code), "output_sheets": output.sheets}
 
 
 WORKBOOK_TEMPLATES = (
@@ -43,6 +56,7 @@ WORKBOOK_TEMPLATES = (
             "LastDeliveryDate",
         ),
         rule_notes=("按原始交货区间读取预测，保留原单位及显式零值。",),
+        **_schedule_output("vitesco_delfor"),
     ),
     WorkbookTemplate(
         code="jlr_delfor",
@@ -51,6 +65,7 @@ WORKBOOK_TEMPLATES = (
         recognition="报文标题以 JLR_DELFOR 开头，读取预测交货计划物料块和日期区间。",
         required_fields=("DelforNo", "BuyerItemNo", "poNo", "Qty", "QtyType"),
         rule_notes=("日期点、区间及六位日期原值保留，周需求和累计差分按工作地图验收。",),
+        **_schedule_output("jlr_delfor"),
     ),
     WorkbookTemplate(
         code="jlr_deljit",
@@ -59,6 +74,7 @@ WORKBOOK_TEMPLATES = (
         recognition="报文标题以 JLR_DELJIT 开头，读取近期供货报文中的物料块和数量表。",
         required_fields=("DeljitNo", "BuyerItemNo", "poNo", "Qty", "QtyType"),
         rule_notes=("按报文保留日期、累计数量及无日期记录，周内拆量按工作地图验收。",),
+        **_schedule_output("jlr_deljit"),
     ),
     WorkbookTemplate(
         code="kroschu_4905",
@@ -74,5 +90,6 @@ WORKBOOK_TEMPLATES = (
             "QuantityUnit",
         ),
         rule_notes=("保留原始交货日期、单位和特殊日期代码，按客户交付样表验收日期轴。",),
+        **_schedule_output("kroschu_4905"),
     ),
 )

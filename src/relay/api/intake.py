@@ -3,11 +3,12 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 from sqlalchemy import Connection, text
 
 from relay.api.auth import SignedInUser
 from relay.database.session import get_engine
+from relay.services.delivery import DELIVERY_CUSTOMERS
 from relay.storage.archive import archive_from_environment
 
 router = APIRouter(prefix="/api/v1/intake", tags=["intake"])
@@ -49,6 +50,11 @@ class AttachmentSummary(BaseModel):
     review_date_code: str | None
     template: str | None
     parser_version: str | None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def can_generate_draft(self) -> bool:
+        return self.job_state == "succeeded" and self.template in DELIVERY_CUSTOMERS
 
 
 class MailDetail(BaseModel):

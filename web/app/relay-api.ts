@@ -11,6 +11,7 @@ export type User = {
 export const roleLabels: Record<Role, string> = { admin: "管理员", viewer: "查询用户" };
 
 const messages: Record<string, string> = {
+  drx_operation_only: "此操作适用于德科 DRX 草稿。请使用当前模板的需求明细及导出。",
   draft_has_confirmed_release: "该批次已有确认版，需要保留草稿及版本记录。",
   release_already_confirmed: "当前草稿版本已确认，请查看确认版本。",
   release_has_blockers: "本次交付仍有待解决事项，请重新核验。",

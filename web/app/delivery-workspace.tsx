@@ -7,11 +7,12 @@ import { Drawer, Modal, type RefSelectProps } from "antd";
 import { type FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { DeliveryDispatchActions } from "./delivery-dispatch";
 import {
-  addQuantities, entryLabels, entryReviewReason, mappingLabels, needsReview, reviewLabels, shortDate,
+  addQuantities, deliveryTemplates, entryLabels, entryReviewReason, mappingLabels, needsReview, reviewLabels, shortDate,
   type DeliveryDraft, type Entry, type Material, type ReviewAction, type ReviewInput, type ReviewKind,
   type Shipment, type Summary,
 } from "./delivery-api";
 import { MappingDialog } from "./material-mapping";
+import { SchedulePreview } from "./schedule-preview";
 import { messageOf, relayRequest, RelayRequestError } from "./relay-api";
 import { WorkbenchHeader, type WorkbenchHeading } from "./workbench-header";
 import { WorkbenchSelect } from "./workbench-select";
@@ -319,7 +320,7 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
       const url = URL.createObjectURL(await response.blob());
       const link = document.createElement("a");
       link.href = url;
-      link.download = `Relay-DRX-${id}-草稿.xlsx`;
+      link.download = `${deliveryTemplates[detail.template].title}-${detail.document_no ?? id}-草稿.xlsx`;
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (reason) {
@@ -412,7 +413,7 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
           <>
             <div className="delivery-detail-title">
               <div>
-                <p className="delivery-eyebrow">德科 DRX · 报文 {detail.document_no ?? "—"}</p>
+                <p className="delivery-eyebrow">{deliveryTemplates[detail.template].title} · 报文 {detail.document_no ?? "—"}</p>
                 <h2>交付草稿 <span className="delivery-badge review">版本 {detail.revision}</span></h2>
               </div>
               <div className="delivery-detail-actions">
@@ -424,8 +425,9 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
                 <button type="button" className="button" disabled={downloading || busy} onClick={() => void download()}>
                   <DownloadOutlined aria-hidden="true" /> {downloading ? "正在生成…" : "下载草稿"}
                 </button>
-                <DeliveryDispatchActions draft={detail} admin={admin} disabled={busy || deleting}
-                  onFix={setMode} onStale={reloadDraft} onReleaseExists={setReleaseExists} />
+                {detail.template === "drx_delfor" &&
+                  <DeliveryDispatchActions draft={detail} admin={admin} disabled={busy || deleting}
+                    onFix={setMode} onStale={reloadDraft} onReleaseExists={setReleaseExists} />}
               </div>
             </div>
             <div className="delivery-meta">
@@ -433,15 +435,20 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
                 <FileExcelOutlined aria-hidden="true" /> {detail.filename}
               </button>
               <span>{shortDate(detail.document_date)}</span>
-              <button type="button" className="text-button" disabled={busy || Boolean(ruleBusy)}
-                onClick={() => void openRulePanel()}>规则 {detail.rule_version}</button>
+              {detail.template === "drx_delfor" ?
+                <button type="button" className="text-button" disabled={busy || Boolean(ruleBusy)}
+                  onClick={() => void openRulePanel()}>规则 {detail.rule_version}</button> :
+                <span>规则 {detail.rule_version}</span>}
             </div>
           </>
         ) : <h2>交付草稿</h2>}
       </header>
       {error && <p className="notice failed" role="alert">{error}</p>}
       {!detail && !error && <p className="empty" role="status">正在读取交付草稿…</p>}
-      {detail && (
+      {detail && detail.template !== "drx_delfor" &&
+        <SchedulePreview draft={detail} admin={admin} busy={busy} forReview={review}
+          onMatch={setMappingMaterial} onRefresh={() => void update("refresh", "POST", {})} />}
+      {detail?.template === "drx_delfor" && (
         <>
           <div className="delivery-view-bar">
             <div className="delivery-view-tabs" aria-label="计划视图">
@@ -616,7 +623,8 @@ function DeliveryDetail({ id, admin, review, onChange, onDeleted, onBack, onArch
       </Modal>}
       {mappingMaterial && <MappingDialog
         existing={mappingMaterial.mapping ?? undefined}
-        initial={mappingMaterial.mapping ?? { customer: "drx", customer_item: mappingMaterial.customer_item ?? "",
+        initial={mappingMaterial.mapping ?? { customer: deliveryTemplates[detail?.template ?? "drx_delfor"].customer,
+          customer_item: mappingMaterial.customer_item ?? "", ship_to: mappingMaterial.ship_to,
           order_no: mappingMaterial.order_no, order_line: mappingMaterial.order_line,
           supplier_item: mappingMaterial.supplier_item }}
         onClose={() => setMappingMaterial(undefined)}
@@ -715,7 +723,7 @@ export function DeliveryWorkspace({ heading, admin, draftId, onSelect, initialRe
         <aside className="delivery-batch-list" aria-label="交付批次">
           <div className="delivery-batch-filters">
             <h2>交付批次</h2>
-            <input ref={batchSearch} value={search} aria-label="搜索交付批次" placeholder="搜索报文或附件" maxLength={120}
+            <input ref={batchSearch} value={search} aria-label="搜索交付批次" placeholder="搜索客户、报文或附件" maxLength={120}
               onChange={(event) => setSearch(event.target.value)} />
             <WorkbenchSelect label="按核对状态筛选" filter active={forReview} value={status}
               options={[{ value: "all", label: "全部状态" }, { value: "review", label: "待核对" }]}
@@ -735,7 +743,7 @@ export function DeliveryWorkspace({ heading, admin, draftId, onSelect, initialRe
               <button className={`delivery-batch ${row.id === draftId ? "selected" : ""}`} type="button"
                 key={row.id} aria-current={row.id === draftId ? "true" : undefined}
                 onClick={() => { setDeletedNotice(""); onSelect(row.id); }}>
-                <span><strong>德科 DRX</strong><span className={`delivery-badge ${pending ? "review" : ""}`}>
+                <span><strong>{deliveryTemplates[row.template].title}</strong><span className={`delivery-badge ${pending ? "review" : ""}`}>
                   {pending ? "待核对" : row.pending_shipments ? "待安排发货" : "草稿"}
                 </span></span>
                 <span>报文 {row.document_no ?? "—"}<time>{shortDate(row.document_date)}</time></span>
@@ -756,7 +764,7 @@ export function DeliveryWorkspace({ heading, admin, draftId, onSelect, initialRe
           : <section className="delivery-empty">
             <FileExcelOutlined aria-hidden="true" />
             <h2>{rows?.length ? "选择交付批次" : "暂无交付草稿"}</h2>
-            <p>{rows?.length ? "从左侧打开批次，查看客户需求和核对状态。" : "管理员可以从收件档案中的德科附件生成草稿。"}</p>
+            <p>{rows?.length ? "从左侧打开批次，查看客户需求和核对状态。" : "管理员可以从收件档案中已解析的附件生成草稿。"}</p>
           </section>}
       </div>
     </main>

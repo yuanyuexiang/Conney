@@ -857,3 +857,180 @@ def test_confirmed_delivery_sends_same_workbook_with_recipient_results(
             ("failed", "outgoing_changed"),
         ]
         assert smtp.data.call_count == 3
+
+
+@pytest.mark.skipif(os.environ.get("RELAY_TEST_DB") != "1", reason="Requires test PostgreSQL")
+@pytest.mark.parametrize(
+    ("template", "customer", "title", "number_key", "date_key", "sheet_name"),
+    [
+        (
+            "kroschu_4905",
+            "kroschu",
+            "4905 - Delivery Call Off",
+            "NewTransmissionNo",
+            "TransferDate",
+            "按交货日期汇总",
+        ),
+        ("jlr_delfor", "jlr", "JLR_DELFOR", "DelforNo", "DelforCreateDate", "周需求"),
+        ("jlr_deljit", "jlr", "JLR_DELJIT", "DeljitNo", "DeljitCreateDate", "周需求"),
+        (
+            "vitesco_delfor",
+            "vitesco",
+            "Vitesco-DELFOR",
+            "DelforNo",
+            "DelforCreateDate",
+            "交货预测周表",
+        ),
+    ],
+)
+def test_other_contract_templates_generate_drafts(
+    tmp_path: Path,
+    signed_in: Callable[[TestClient, Role], User],
+    request: pytest.FixtureRequest,
+    template: str,
+    customer: str,
+    title: str,
+    number_key: str,
+    date_key: str,
+    sheet_name: str,
+) -> None:
+    item = "QA-" + uuid4().hex[:8]
+    workbook = Workbook()
+    sheet = workbook["Sheet"]
+    sheet.append([title])
+    header = [number_key, "00052", date_key, "261122"]
+    if template == "vitesco_delfor":
+        header = [
+            number_key,
+            "00052",
+            date_key,
+            "20261122",
+            "BlanketOrderNo",
+            "00042",
+            "DelforType",
+            "241",
+        ]
+    sheet.append(header)
+    if template == "kroschu_4905":
+        for row in [
+            ["OrderNo", "00042", "CustomerItemNo", item, "QuantityUnit", "ST"],
+            ["DateTime", "Qty"],
+            ["261123", "100"],
+            ["261130", "0"],
+            ["000000", "0"],
+            ["333333", "19"],
+        ]:
+            sheet.append(row)
+    elif template == "vitesco_delfor":
+        for row in [
+            ["LineItemNo", "1", "BuyerItemNo", item, "ShipToNo", "42"],
+            [
+                "DeliveryPlanStatusIndicator",
+                "QtyType",
+                "Qty",
+                "QtyUnit",
+                "RequestedDeliveryDate",
+                "EarliestDeliveryDate",
+                "LastDeliveryDate",
+            ],
+            ["F", "113", "0", "C62", None, "20261123", "20261129"],
+            ["F", "113", "5040", "C62", None, "20261207", "20261213"],
+        ]:
+            sheet.append(row)
+    else:
+        sheet.append(["poNo", "00042", "BuyerItemNo", item, "POLineNo", "00010"])
+        if template == "jlr_delfor":
+            sheet.append(["PreviousCumulativeQty"])
+            sheet.append(["40087"])
+            sheet.append(
+                [
+                    "Qty",
+                    "QtyType",
+                    "QtyUnit",
+                    "RequestedDeliveryDate",
+                    "HorizonStartDate",
+                    "HorizonEndDate",
+                ]
+            )
+            sheet.append(["3168", "1", "EA", "261217"])
+            sheet.append(["44047", "3", "EA", None, "261221", "261227"])
+            sheet.append(["44551", "3", "EA", None, "261228", "270103"])
+        else:
+            sheet.append(["Qty", "QtyType", "QtyUnit", "RequestedDeliveryDate"])
+            sheet.append(["5809", "3", "EA", "261112"])
+            sheet.append(["768", "1", "EA", "261112"])
+            sheet.append(["912", "1", "EA", "261119"])
+    buffer = BytesIO()
+    workbook.save(buffer)
+    mail = EmailMessage()
+    mail["From"] = "sanitized@example.com"
+    mail["Subject"] = "Plan generation test"
+    mail.set_content("Sanitized attachment")
+    mail.add_attachment(
+        buffer.getvalue(),
+        maintype="application",
+        subtype="octet-stream",
+        filename="plan-sample.xlsx",
+    )
+    archive = Archive(tmp_path / "plan-archive")
+    received = receive(
+        mail.as_bytes(),
+        MailIdentity(f"test:{item}", "INBOX", 1, 1, datetime.now(UTC)),
+        archive,
+    )
+    request.addfinalizer(lambda: _remove_test_delivery(received.mail_id, item))
+    assert process_one(archive)
+    with TestClient(app, headers=_BROWSER) as admin, TestClient(app, headers=_BROWSER) as viewer:
+        signed_in(admin, "admin")
+        signed_in(viewer, "viewer")
+        (attachment,) = viewer.get(f"/api/v1/intake/emails/{received.mail_id}").json()[
+            "attachments"
+        ]
+        assert attachment["can_generate_draft"] and attachment["template"] == template
+        assert attachment["job_state"] == "succeeded"
+        open_url = f"/api/v1/delivery/attachments/{attachment['id']}"
+        assert viewer.post(open_url).status_code == 403
+        opened = admin.post(open_url)
+        assert opened.status_code == 200, opened.text
+        draft = opened.json()
+        assert draft["template"] == template and draft["pending_mappings"] == 1
+        assert draft["document_no"] == "00052"
+        assert admin.post(open_url).json()["id"] == draft["id"]
+        assert (
+            admin.post(
+                "/api/v1/material-mappings",
+                json={
+                    "customer": customer,
+                    "customer_item": item,
+                    "order_no": "00042",
+                    "internal_item": "00024",
+                },
+            ).status_code
+            == 201
+        )
+        draft_url = f"/api/v1/delivery/{draft['id']}"
+        refreshed = admin.post(f"{draft_url}/refresh", json={"revision": draft["revision"]})
+        assert refreshed.status_code == 200, refreshed.text
+        result = refreshed.json()
+        assert result["pending_mappings"] == 0
+        assert result["materials"][0]["mapping"]["internal_item"] == "00024"
+        download = viewer.get(f"{draft_url}/draft.xlsx", params={"revision": result["revision"]})
+        assert download.status_code == 200, download.text
+        export = load_workbook(BytesIO(download.content))
+        plan = export[sheet_name]
+        assert plan["A5"].value == "00024" and plan["C5"].value == "00042"
+        assert export["需求与来源"]["S4"].value
+        if template == "kroschu_4905":
+            assert [plan[f"{column}5"].value for column in "HI"] == [100, 0]
+            assert plan["H4"].value == "=H3-98"
+            assert result["pending_entries"] == 1
+            assert export["待核对"]["I4"].value == "333333"
+        elif template == "jlr_delfor":
+            assert [plan[f"{column}5"].value for column in "HIJ"] == [3168, 792, 504]
+            assert result["pending_entries"] == 0
+        elif template == "jlr_deljit":
+            assert [plan[f"{column}5"].value for column in "HI"] == [768, 912]
+            assert export["需求与来源"]["L4"].value == "5809"
+        else:
+            assert [plan[f"{column}5"].value for column in "HIJ"] == [0, None, 5040]
+            assert export["库存测算"]["F7"].value == '=IF(COUNT(E7,F5,F6)=3,E7-F5+F6,"")'

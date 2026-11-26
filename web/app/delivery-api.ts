@@ -10,6 +10,15 @@ export const customerLabels = {
 
 export type Customer = keyof typeof customerLabels;
 
+export const deliveryTemplates = {
+  drx_delfor: { title: "德科 DRX", customer: "drx" },
+  kroschu_4905: { title: "科伯舒特 4905", customer: "kroschu" },
+  jlr_delfor: { title: "捷豹路虎 DELFOR", customer: "jlr" },
+  jlr_deljit: { title: "捷豹路虎 DELJIT", customer: "jlr" },
+  vitesco_delfor: { title: "舍弗勒 Vitesco", customer: "vitesco" },
+} as const;
+export type DeliveryTemplate = keyof typeof deliveryTemplates;
+
 export type MappingValues = {
   customer: Customer;
   customer_item: string;
@@ -67,6 +76,16 @@ export type Entry = {
   shipment: Shipment | null;
   eta: string | null;
   review: EntryReview | null;
+  plan: {
+    kind: "day" | "week" | "interval" | "special" | "placeholder" | "auxiliary" | "review";
+    amount: string | null;
+    start: string | null;
+    end: string | null;
+    raw_start: string | null;
+    raw_end: string | null;
+    basis: string;
+    issue: string | null;
+  } | null;
 };
 
 export type Material = {
@@ -84,6 +103,7 @@ export type Material = {
 
 export type Summary = {
   id: number;
+  template: DeliveryTemplate;
   attachment_id: number;
   filename: string;
   document_no: string | null;
@@ -143,7 +163,7 @@ export function shortDate(value: string | null) {
   return /^\d{8}$/.test(value) ? `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6)}` : value;
 }
 
-export function addQuantities(entries: Entry[]) {
+export function addQuantities(entries: Pick<Entry, "quantity">[]) {
   const parts = entries.map(({ quantity }) => quantity.split("."));
   const scale = Math.max(0, ...parts.map(([, fraction]) => fraction?.length ?? 0));
   const scaled = parts.reduce((sum, [whole, fraction = ""]) => (
