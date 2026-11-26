@@ -1,4 +1,5 @@
 import os
+import smtplib
 import sys
 from collections.abc import Callable
 from unittest.mock import MagicMock
@@ -16,6 +17,81 @@ from relay.mail.configuration import enabled_sync_revision, get_mail_settings, r
 from relay.workers import mail as mail_worker
 
 _BROWSER = {"X-Relay-Request": "1"}
+
+
+@pytest.mark.skipif(os.environ.get("RELAY_TEST_DB") != "1", reason="Requires test PostgreSQL")
+def test_outgoing_uses_saved_incoming_credential_and_requires_retest_after_rotation(
+    monkeypatch: pytest.MonkeyPatch,
+    signed_in: Callable[[TestClient, Role], User],
+) -> None:
+    monkeypatch.setenv("RELAY_MAIL_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    get_mail_settings.cache_clear()
+    smtp = MagicMock()
+    monkeypatch.setattr(smtplib, "SMTP_SSL", MagicMock(return_value=smtp))
+    incoming = "/api/v1/mailbox"
+    outgoing = "/api/v1/mailbox/outgoing"
+    account = {
+        "address": "shared-test@163.com",
+        "host": "imap.163.com",
+        "folder": "INBOX",
+        "since": "2026-11-01",
+        "poll_minutes": 5,
+        "password": "test-only-shared-code",
+    }
+    link = {
+        "address": account["address"],
+        "host": "smtp.163.com",
+        "credential_source": "incoming",
+        "domains": [],
+        "test_recipient": "receiver@example.com",
+    }
+    try:
+        with TestClient(app, headers=_BROWSER) as client:
+            signed_in(client, "admin")
+            assert client.put(outgoing, json=link).status_code == 409
+            assert client.put(incoming, json=account).status_code == 200
+            wrong_account = client.put(outgoing, json={**link, "address": "other@163.com"})
+            assert wrong_account.status_code == 409
+            assert client.put(outgoing, json={**link, "password": "test-extra"}).status_code == 422
+            saved = client.put(outgoing, json=link)
+            assert saved.status_code == 200
+            assert saved.json()["credential_source"] == "incoming"
+            assert saved.json()["credential_available"] and not saved.json()["verified"]
+            assert account["password"] not in saved.text
+            assert client.post(outgoing + "/connection-test").json() == {"result": "ok"}
+            smtp.login.assert_called_once_with(account["address"], account["password"])
+            smtp.mail.assert_not_called()
+            smtp.rcpt.assert_not_called()
+            smtp.data.assert_not_called()
+
+            new_scope = client.put(incoming, json={**account, "password": None, "poll_minutes": 8})
+            assert new_scope.status_code == 200
+            after_scope = client.get(outgoing).json()
+            assert after_scope["revision"] == saved.json()["revision"] and after_scope["verified"]
+
+            new_code = "test-only-rotated-code"
+            assert client.put(incoming, json={**account, "password": new_code}).status_code == 200
+            rotated = client.get(outgoing).json()
+            assert rotated["revision"] != saved.json()["revision"] and not rotated["verified"]
+            assert client.post(outgoing + "/connection-test").json() == {"result": "ok"}
+            smtp.login.assert_called_with(account["address"], new_code)
+
+            replacement = client.put(incoming, json={**account, "address": "replacement@163.com"})
+            assert replacement.is_success
+            detached = client.get(outgoing).json()
+            assert detached["address"] == account["address"]
+            assert not detached["credential_available"]
+            assert client.post(outgoing + "/connection-test").status_code == 409
+            standalone = {**link, "credential_source": "separate"}
+            assert client.put(outgoing, json=standalone).status_code == 409
+            assert client.put(outgoing, json={**standalone, "password": "test-separate"}).is_success
+            assert client.post(outgoing + "/connection-test").json() == {"result": "ok"}
+            smtp.login.assert_called_with(account["address"], "test-separate")
+    finally:
+        with get_engine().begin() as connection:
+            connection.execute(text("DELETE FROM outgoing_mailbox"))
+            connection.execute(text("DELETE FROM mailbox_settings"))
+        get_mail_settings.cache_clear()
 
 
 @pytest.mark.skipif(os.environ.get("RELAY_TEST_DB") != "1", reason="Requires test PostgreSQL")

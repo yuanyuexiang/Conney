@@ -1,4 +1,50 @@
-.dispatch-settings-tabs { margin-bottom: 1rem; }
+.mailbox-workspace { display: grid; gap: 1rem; align-items: start; }
+.mailbox-source {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11.5rem), 1fr));
+  gap: .6rem;
+  min-width: 0;
+  margin: 1rem 0 .7rem;
+  padding: 0;
+  border: 0;
+}
+.mailbox-source legend { padding: 0 0 .35rem; font-size: .875rem; font-weight: 620; }
+.mailbox-source > label {
+  flex-direction: row;
+  align-items: flex-start;
+  padding: .68rem .75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.mailbox-source > label:has(input:checked) { border-color: #9cc5df; background: var(--blue-light); }
+.mailbox-source > label > input {
+  width: 1rem;
+  min-height: 1rem;
+  margin: .18rem .2rem 0 0;
+  padding: 0;
+  flex: none;
+  accent-color: var(--blue);
+}
+.mailbox-source strong, .mailbox-source small { display: block; }
+.mailbox-source small { margin-top: .18rem; color: var(--secondary); font-size: .78rem; }
+.mailbox-linked-account {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+  padding: .65rem .75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow-wrap: anywhere;
+}
+.mailbox-linked-account .anticon { color: var(--blue-dark); }
+.mailbox-linked-account :is(strong, span:not(.anticon)) { display: block; }
+.mailbox-linked-account div > span { color: var(--secondary); font-size: .8rem; }
+@media (min-width: 1280px) {
+  .mailbox-workspace { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mailbox-workspace > .mailbox-settings { grid-template-columns: minmax(0, 1fr); }
+}
 .dispatch-wide { grid-column: 1 / -1; }
 .dispatch-form { display: grid; gap: .85rem; min-width: 0; margin-top: .75rem; }
 .dispatch-form label:not(.dispatch-choice) { display: grid; gap: .35rem; font-size: .875rem; font-weight: 620; }
@@ -6,7 +52,10 @@
   min-width: 0; width: 100%; min-height: 41px; border: 1px solid #cbd8e3; border-radius: 6px;
   padding: .48rem .65rem; color: var(--ink); background: #fff; font: inherit; font-weight: 400;
 }
-.dispatch-form label > :is(input, textarea):disabled { background: var(--surface); color: var(--muted); }
+.dispatch-form label > :is(input:disabled, input[readonly], textarea:disabled) {
+  background: var(--surface); color: var(--secondary);
+}
+.dispatch-form textarea[aria-invalid="true"] { border-color: #c86961; }
 .dispatch-form textarea { resize: vertical; }
 .dispatch-form textarea:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .dispatch-form .dispatch-date { max-width: 15rem; }

@@ -1,6 +1,7 @@
 import type { DeliveryTemplate } from "./delivery-api";
 
 export type OutgoingHost = "smtp.263.net" | "smtpw.263.net" | "smtp.163.com";
+export type CredentialSource = "incoming" | "separate";
 
 export type OutgoingConfig = {
   address: string;
@@ -9,6 +10,8 @@ export type OutgoingConfig = {
   test_recipient: string | null;
   revision: string;
   verified: boolean;
+  credential_source: CredentialSource;
+  credential_available: boolean;
 };
 
 export type RecipientGroup = {

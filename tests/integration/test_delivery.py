@@ -827,6 +827,12 @@ def test_confirmed_delivery_sends_same_workbook_with_recipient_results(
         assert admin.put(settings_url, json=test_settings).status_code == 200
         assert admin.post(f"{settings_url}/connection-test").json() == {"result": "ok"}
         assert connector.call_args.args == ("smtp.163.com", 465)
+        invalid_email = admin.post(groups_url, json={"name": "生产部", "addresses": ["生产部888"]})
+        assert invalid_email.status_code == 422
+        assert invalid_email.json() == {"detail": "dispatch_group_invalid_addresses"}
+        invalid_name = admin.post(groups_url, json={"name": " ", "addresses": [addresses[2]]})
+        assert invalid_name.status_code == 422
+        assert invalid_name.json() == {"detail": "dispatch_group_invalid_name"}
         assert (
             admin.post(groups_url, json={"name": "非测试地址", "addresses": addresses}).status_code
             == 422

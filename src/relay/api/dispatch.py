@@ -12,6 +12,7 @@ from relay.api.delivery import _draft_row
 from relay.api.mailbox import MailboxCipher
 from relay.database.session import get_engine
 from relay.mail.outgoing import (
+    IncomingMailboxUnavailable,
     OutgoingConfig,
     OutgoingInput,
     check_outgoing,
@@ -58,7 +59,10 @@ def outgoing_settings(_: AdminUser) -> OutgoingConfig | None:
 
 @router.put("/mailbox/outgoing", dependencies=_BROWSER)
 def set_outgoing(values: OutgoingInput, cipher: MailboxCipher) -> OutgoingConfig:
-    saved = save_outgoing(values, cipher)
+    try:
+        saved = save_outgoing(values, cipher)
+    except IncomingMailboxUnavailable:
+        raise HTTPException(409, detail="outgoing_incoming_unavailable") from None
     if saved is None:
         raise HTTPException(409, detail="outgoing_credential_required")
     return saved
@@ -69,6 +73,8 @@ def test_outgoing(cipher: MailboxCipher) -> dict[str, str]:
     row = read_credentials()
     if row is None:
         raise HTTPException(409, detail="outgoing_not_configured")
+    if not row.credential_available:
+        raise HTTPException(409, detail="outgoing_incoming_unavailable")
     try:
         credentials = decrypt_credentials(row, cipher)
     except InvalidToken:

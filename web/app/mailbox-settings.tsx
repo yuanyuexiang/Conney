@@ -19,6 +19,8 @@ type Mailbox = {
   last_sync_count: number | null;
 };
 
+export type CollectionAccount = Pick<Mailbox, "address" | "host" | "has_password">;
+
 const initialMailbox: Mailbox = {
   address: "",
   host: "imap.263.net",
@@ -58,7 +60,10 @@ const chinaTime = new Intl.DateTimeFormat("zh-CN", {
   timeZone: "Asia/Shanghai", dateStyle: "short", timeStyle: "short", hour12: false,
 });
 
-export function MailboxSettings({ onChanged }: { onChanged: () => void }) {
+export function MailboxSettings({ onChanged, onAccount }: {
+  onChanged: () => void;
+  onAccount: (value: CollectionAccount | null) => void;
+}) {
   const [mailbox, setMailbox] = useState<Mailbox>(initialMailbox);
   const [password, setPassword] = useState("");
   const [dirty, setDirty] = useState(false);
@@ -75,8 +80,10 @@ export function MailboxSettings({ onChanged }: { onChanged: () => void }) {
     const controller = new AbortController();
     relayRequest<Mailbox | null>("/mailbox", { signal: controller.signal })
       .then((saved) => {
+        if (controller.signal.aborted) return;
         setMailbox(saved ?? initialMailbox);
         setSavedAccount(saved);
+        onAccount(saved);
         setLoaded(true);
       })
       .catch((error) => {
@@ -84,7 +91,7 @@ export function MailboxSettings({ onChanged }: { onChanged: () => void }) {
       })
       .finally(() => { if (!controller.signal.aborted) setPending(null); });
     return () => controller.abort();
-  }, []);
+  }, [onAccount]);
 
   useEffect(() => {
     if (!mailbox.enabled || dirty || pending) return;
@@ -128,6 +135,7 @@ export function MailboxSettings({ onChanged }: { onChanged: () => void }) {
       const saved = await relayRequest<Mailbox | null>("/mailbox");
       setMailbox(saved ?? initialMailbox);
       setSavedAccount(saved);
+      onAccount(saved);
       setPassword("");
       setDirty(false);
       setLoaded(true);
@@ -152,6 +160,7 @@ export function MailboxSettings({ onChanged }: { onChanged: () => void }) {
       });
       setMailbox(saved);
       setSavedAccount(saved);
+      onAccount(saved);
       setPassword("");
       setDirty(false);
       onChanged();
@@ -171,6 +180,7 @@ export function MailboxSettings({ onChanged }: { onChanged: () => void }) {
       const saved = await relayRequest<Mailbox | null>("/mailbox");
       setMailbox(saved ?? initialMailbox);
       setSavedAccount(saved);
+      onAccount(saved);
       onChanged();
       setMessage({ ok: result === "ok", text: connectionMessages[result] ?? "无法确认连接结果。" });
     } catch (error) {
@@ -215,17 +225,19 @@ export function MailboxSettings({ onChanged }: { onChanged: () => void }) {
     <div className="mailbox-settings">
       <form className="page-card mailbox-card" onSubmit={(event) => void save(event)}>
         <div className="section-heading">
-          <h2><MailOutlined aria-hidden="true" /> IMAP 采集邮箱</h2>
-          <span className={`status ${mailbox.enabled ? "complete" : "queued"}`}>{mailbox.enabled ? "采集中" : "采集未启用"}</span>
+          <h2><MailOutlined aria-hidden="true" /> 收件采集</h2>
+          <span className={`status ${mailbox.enabled ? "complete" : "queued"}`}>
+            {mailbox.enabled ? "采集中" : !mailbox.has_password ? "待配置" : mailbox.verified ? "待启动" : "待验证"}
+          </span>
         </div>
-        <p className="field-hint">测试连接只读打开指定文件夹。保存新的配置会暂停采集，重新测试后可启用。</p>
+        <p className="field-hint">通过 IMAP 只读采集订单附件。保存变更后，需重新测试并启动采集。</p>
         {!loaded && pending === null && <button type="button" className="button" onClick={() => void refresh()}><ReloadOutlined aria-hidden="true" /> 重新读取配置</button>}
         <fieldset className="mailbox-fields" disabled={!loaded || pending !== null}>
           <label>邮箱地址
             <input type="email" autoComplete="off" value={mailbox.address} required maxLength={254}
               placeholder="edi@company.com 或 name@163.com" onChange={(event) => editAddress(event.target.value)} />
           </label>
-          <label>邮箱授权码
+          <label>客户端授权码
             <input type="password" autoComplete="new-password" value={password} maxLength={512}
               required={!canKeepPassword}
               placeholder={canKeepPassword ? "留空保留已保存的授权码" : "输入客户端授权码"}
@@ -246,10 +258,10 @@ export function MailboxSettings({ onChanged }: { onChanged: () => void }) {
         {notice}
         <div className="mailbox-actions">
           <button type="submit" className="button primary-button" disabled={!loaded || pending !== null || !dirty || providerMismatch}>
-            {pending === "save" ? "保存中…" : "保存配置"}
+            {pending === "save" ? "保存中…" : "保存采集配置"}
           </button>
           <button type="button" className="button" onClick={() => void testConnection()} disabled={pending !== null || dirty || !mailbox.has_password}>
-            {pending === "test" ? "测试中…" : "测试连接"}
+            {pending === "test" ? "测试中…" : "测试收件连接"}
           </button>
           <button type="button" className="button" onClick={() => void setSync(!mailbox.enabled)}
             disabled={pending !== null || (!mailbox.enabled && (dirty || !mailbox.verified))}>

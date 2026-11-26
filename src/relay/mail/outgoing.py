@@ -16,7 +16,13 @@ from sqlalchemy import Connection, RowMapping, text
 from relay.database.session import get_engine
 
 SmtpHost = Literal["smtp.263.net", "smtpw.263.net", "smtp.163.com"]
+CredentialSource = Literal["incoming", "separate"]
 NETEASE_HOST = "smtp.163.com"
+_IMAP_HOSTS: dict[SmtpHost, str] = {
+    "smtp.263.net": "imap.263.net",
+    "smtpw.263.net": "imapw.263.net",
+    "smtp.163.com": "imap.163.com",
+}
 _WORKBOOK_TYPE = "vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 Address = Annotated[EmailStr, Field(max_length=254)]
@@ -28,6 +34,7 @@ class OutgoingInput(BaseModel):
     domains: list[str] = Field(max_length=20)
     test_recipient: Address | None = None
     password: SecretStr | None = None
+    credential_source: CredentialSource = "separate"
 
     @field_validator("domains")
     @classmethod
@@ -67,6 +74,8 @@ class OutgoingInput(BaseModel):
         ):
             raise ValueError("Expected ASCII mailbox address")
         if self.password is not None:
+            if self.credential_source == "incoming":
+                raise ValueError("A linked mailbox already has a saved IMAP credential")
             password = self.password.get_secret_value()
             if (
                 not password
@@ -85,6 +94,8 @@ class OutgoingConfig(BaseModel):
     test_recipient: str | None
     revision: UUID
     verified: bool
+    credential_source: CredentialSource
+    credential_available: bool
 
     def allows(self, address: str) -> bool:
         if self.test_recipient:
@@ -96,16 +107,32 @@ class OutgoingCredentials(OutgoingConfig):
     password: SecretStr
 
 
-_PUBLIC = "address, host, domains, test_recipient, revision, verified"
+_MAILBOX_JOIN = """
+    FROM outgoing_mailbox AS o
+    LEFT JOIN mailbox_settings AS i ON i.id = 1 AND o.encrypted_password IS NULL
+        AND i.address = o.address AND i.host = CASE o.host
+            WHEN 'smtp.163.com' THEN 'imap.163.com'
+            WHEN 'smtpw.263.net' THEN 'imapw.263.net'
+            WHEN 'smtp.263.net' THEN 'imap.263.net'
+        END
+    WHERE o.id = 1
+"""
+_PUBLIC = """
+    o.address, o.host, o.domains, o.test_recipient, o.revision,
+    o.verified AND (o.encrypted_password IS NOT NULL OR i.id IS NOT NULL) AS verified,
+    CASE WHEN o.encrypted_password IS NULL THEN 'incoming' ELSE 'separate' END AS credential_source,
+    o.encrypted_password IS NOT NULL OR i.id IS NOT NULL AS credential_available
+"""
+
+
+class IncomingMailboxUnavailable(ValueError):
+    pass
 
 
 def read_outgoing(connection: Connection, *, lock: bool = False) -> OutgoingConfig | None:
     row = (
         connection.execute(
-            text(
-                f"SELECT {_PUBLIC} FROM outgoing_mailbox WHERE id = 1"
-                + (" FOR SHARE" if lock else "")
-            )
+            text(f"SELECT {_PUBLIC} {_MAILBOX_JOIN}" + (" FOR SHARE OF o" if lock else ""))
         )
         .mappings()
         .one_or_none()
@@ -114,16 +141,33 @@ def read_outgoing(connection: Connection, *, lock: bool = False) -> OutgoingConf
 
 
 def save_outgoing(values: OutgoingInput, cipher: Fernet) -> OutgoingConfig | None:
-    params = {**values.model_dump(exclude={"password"}), "revision": uuid4()}
+    params = {**values.model_dump(exclude={"password", "credential_source"}), "revision": uuid4()}
     with get_engine().begin() as connection:
-        if values.password is None:
+        if values.credential_source == "incoming":
+            # Take the incoming lock first, the same order as a credential update.
+            linked = connection.scalar(
+                text("""
+                    SELECT id FROM mailbox_settings
+                    WHERE id = 1 AND address = :address AND host = :imap_host FOR SHARE
+                """),
+                {"address": values.address, "imap_host": _IMAP_HOSTS[values.host]},
+            )
+            if linked is None:
+                raise IncomingMailboxUnavailable
+
+        if values.credential_source == "separate" and values.password is None:
             query = (
                 "UPDATE outgoing_mailbox SET domains = :domains, test_recipient = :test_recipient, "
                 "revision = :revision, verified = false "
-                "WHERE id = 1 AND address = :address AND host = :host"
+                "WHERE id = 1 AND address = :address AND host = :host "
+                "AND encrypted_password IS NOT NULL"
             )
         else:
-            params["encrypted"] = cipher.encrypt(values.password.get_secret_value().encode())
+            params["encrypted"] = (
+                cipher.encrypt(values.password.get_secret_value().encode())
+                if values.password is not None
+                else None
+            )
             query = """
                 INSERT INTO outgoing_mailbox
                     (id, address, host, encrypted_password, domains, test_recipient, revision)
@@ -133,19 +177,20 @@ def save_outgoing(values: OutgoingInput, cipher: Fernet) -> OutgoingConfig | Non
                     test_recipient = EXCLUDED.test_recipient, revision = EXCLUDED.revision,
                     verified = false
             """
-        row = (
-            connection.execute(text(f"{query} RETURNING {_PUBLIC}"), params)
-            .mappings()
-            .one_or_none()
-        )
-    return OutgoingConfig.model_validate(row) if row is not None else None
+        updated = connection.scalar(text(f"{query} RETURNING id"), params)
+        return read_outgoing(connection) if updated is not None else None
 
 
 def read_credentials() -> RowMapping | None:
     with get_engine().connect() as connection:
         return (
             connection.execute(
-                text(f"SELECT {_PUBLIC}, encrypted_password FROM outgoing_mailbox WHERE id = 1")
+                text(f"""
+                    SELECT {_PUBLIC},
+                           COALESCE(o.encrypted_password, i.encrypted_password)
+                               AS encrypted_password
+                    {_MAILBOX_JOIN}
+                """)
             )
             .mappings()
             .one_or_none()

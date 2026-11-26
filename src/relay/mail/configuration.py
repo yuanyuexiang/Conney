@@ -131,6 +131,13 @@ def save_configuration(values: MailboxInput, cipher: Fernet) -> MailboxConfig:
                 ),
                 {**params, "encrypted_password": encrypted},
             )
+            connection.execute(
+                text("""
+                    UPDATE outgoing_mailbox SET revision = :revision, verified = false
+                    WHERE id = 1 AND encrypted_password IS NULL
+                """),
+                {"revision": uuid4()},
+            )
     return MailboxConfig.model_validate(
         {**fields, "has_password": True, "enabled": False, "verified": False}
     )

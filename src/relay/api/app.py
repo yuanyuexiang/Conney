@@ -29,12 +29,18 @@ app.include_router(dashboard_router)
 
 @app.exception_handler(RequestValidationError)
 async def handle_validation_error(request: Request, error: RequestValidationError) -> JSONResponse:
-    if (
-        request.url.path.startswith(
-            ("/api/v1/mailbox/outgoing", "/api/v1/mailbox/recipient-groups")
-        )
-        or "/dispatches" in request.url.path
-    ):
+    if request.url.path.startswith("/api/v1/mailbox/recipient-groups"):
+        fields = {
+            item["loc"][1]
+            for item in error.errors()
+            if item["loc"][:1] == ("body",) and len(item["loc"]) > 1
+        }
+        if "name" in fields:
+            return JSONResponse({"detail": "dispatch_group_invalid_name"}, status_code=422)
+        if "addresses" in fields:
+            return JSONResponse({"detail": "dispatch_group_invalid_addresses"}, status_code=422)
+        return JSONResponse({"detail": "dispatch_group_invalid_fields"}, status_code=422)
+    if request.url.path.startswith("/api/v1/mailbox/outgoing") or "/dispatches" in request.url.path:
         return JSONResponse({"detail": "dispatch_invalid_fields"}, status_code=422)
     if request.url.path.startswith("/api/v1/mailbox"):
         return JSONResponse({"detail": "mailbox_invalid_fields"}, status_code=422)
