@@ -69,15 +69,15 @@
 .delivery-view-tabs button > span { margin-inline-start: .3rem; color: #805810; font-variant-numeric: tabular-nums; }
 
 .delivery-date-pages { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; padding: .45rem .85rem; font-size: .78rem; }
-.delivery-grid { max-height: max(300px, calc(100dvh - 18rem)); margin-top: 0; border: 0; border-radius: 0; }
+.delivery-grid { --delivery-kn-width: 9rem; max-height: max(300px, calc(100dvh - 18rem)); margin-top: 0; border: 0; border-radius: 0; }
 .delivery-grid table { width: max-content; min-width: 0; border-collapse: separate; border-spacing: 0; }
 .delivery-grid th, .delivery-grid td { min-width: 105px; height: 48px; padding: .47rem .62rem; border-bottom: 1px solid var(--border); border-right: 1px solid #eaf0f4; vertical-align: middle; }
 .delivery-grid th { font-size: .78rem; }
 .delivery-grid thead th { position: sticky; z-index: 2; top: 0; background: #edf4f9; white-space: nowrap; }
 .delivery-grid .freeze { position: sticky; z-index: 1; background: #fff; white-space: normal; }
 .delivery-grid thead .freeze { z-index: 3; background: #edf4f9; }
-.delivery-grid .kn-column { left: 0; width: 132px; min-width: 132px; max-width: 132px; overflow-wrap: anywhere; }
-.delivery-grid .customer-column { left: 132px; width: 145px; min-width: 145px; max-width: 145px; overflow-wrap: anywhere; box-shadow: 5px 0 7px -6px #718da3; }
+.delivery-grid .kn-column { left: 0; width: var(--delivery-kn-width); min-width: var(--delivery-kn-width); max-width: var(--delivery-kn-width); overflow-wrap: anywhere; }
+.delivery-grid .customer-column { left: var(--delivery-kn-width); width: 145px; min-width: 145px; max-width: 145px; overflow-wrap: anywhere; box-shadow: 5px 0 7px -6px #718da3; }
 .delivery-grid td.customer-column strong, .delivery-grid small { display: block; }
 .delivery-grid small { margin-top: .19rem; color: var(--muted); font-size: .69rem; }
 .delivery-grid .quantity-cell { padding: .2rem .35rem; text-align: right; font-variant-numeric: tabular-nums; }
@@ -255,8 +255,7 @@
 
 @media (max-width: 960px) {
   .delivery-columns { grid-template-columns: minmax(175px, 24vw) minmax(0, 1fr); }
-  .delivery-grid .kn-column { width: 102px; min-width: 102px; max-width: 102px; }
-  .delivery-grid .customer-column { left: 102px; width: 115px; min-width: 115px; max-width: 115px; }
+  .delivery-grid .customer-column { width: 115px; min-width: 115px; max-width: 115px; }
 }
 @media (max-width: 760px) {
   .delivery-columns { display: block; min-height: 0; }
@@ -266,8 +265,7 @@
   .delivery-grid { max-height: 65vh; }
 }
 @media (max-width: 480px) {
-  .delivery-grid .kn-column { width: 82px; min-width: 82px; max-width: 82px; }
-  .delivery-grid .customer-column { left: 82px; width: 93px; min-width: 93px; max-width: 93px; }
+  .delivery-grid .customer-column { width: 93px; min-width: 93px; max-width: 93px; }
   .ant-modal .mapping-modal-panel { --mapping-inset: 1rem; border-radius: 10px; }
   .mapping-field-grid { grid-template-columns: minmax(0, 1fr); gap: .68rem; }
   .delivery-filters > input { max-width: 170px; }
